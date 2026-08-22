@@ -15,6 +15,22 @@ import settings
 logger = logging.getLogger(__name__)
 
 
+class ReplacementEmailFailure(RuntimeError):
+    """替换邮箱自身不可用；工作线程应隔离该邮箱并自动轮换下一个。"""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = str(code or "replacement_failed")
+
+
+class RebindOutcomeUnknown(RuntimeError):
+    """邮箱可能已经换绑，禁止自动换下一个邮箱，必须保留现场供人工核验。"""
+
+    def __init__(self, new_email: str, message: str):
+        super().__init__(message)
+        self.new_email = str(new_email or "").strip()
+
+
 def _load_main_roxy():
     if not settings.MAIN_SITE_PATH.exists():
         raise RuntimeError(f"未找到主站目录：{settings.MAIN_SITE_PATH}")
@@ -232,11 +248,17 @@ def _change_email(
         ))
         if email_otp_page and not otp_sent:
             progress("wait_new_email_otp", "通过替换邮箱 API 等待新验证码")
-            code = mail_api.wait_for_new_otp(
-                api_url, new_email, previous=previous_otp,
-                max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
-                stop_check=lambda: _visible_input(driver, ['input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[name="code"]']) is None,
-            )
+            try:
+                code = mail_api.wait_for_new_otp(
+                    api_url, new_email, previous=previous_otp,
+                    max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
+                    stop_check=lambda: _visible_input(driver, ['input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[name="code"]']) is None,
+                )
+            except Exception as exc:
+                raise ReplacementEmailFailure(
+                    "otp_unavailable",
+                    f"替换邮箱 {new_email} 未取得新验证码：{type(exc).__name__}: {str(exc)[:300]}",
+                ) from exc
             progress("submit_new_email_otp", "提交替换邮箱验证码")
             _set_value(driver, numeric_input, code)
             _submit_near(driver, numeric_input)
@@ -244,9 +266,13 @@ def _change_email(
             time.sleep(3)
             continue
 
-        if new_email_sent and any(marker in lowered for marker in ("already exists", "already in use", "已被使用", "无法更改", "not eligible")):
-            raise RuntimeError("替换邮箱已被占用或当前账号不符合自助换绑条件")
+        if new_email_sent and any(marker in lowered for marker in ("already exists", "already in use", "已被使用", "已存在", "邮箱已占用")):
+            raise ReplacementEmailFailure("email_in_use", f"替换邮箱 {new_email} 已被其他账号占用")
+        if new_email_sent and any(marker in lowered for marker in ("not eligible", "无法更改", "cannot change")):
+            raise RuntimeError("当前账号不符合自助换绑条件")
         time.sleep(1)
+    if otp_sent:
+        raise RebindOutcomeUnknown(new_email, "新邮箱验证码已提交，但没有确认最终换绑结果")
     raise TimeoutError("邮箱换绑流程超时；没有观察到换绑完成后的退出登录状态")
 
 
@@ -303,17 +329,25 @@ def perform_email_rebind(
             progress=progress,
         )
 
-        progress("relogin_new", f"清理旧登录态并使用替换邮箱重新登录：{new_email}")
-        _clear_login_state(driver)
-        safe_get(driver, "https://chatgpt.com/auth/login", timeout=45, attempts=2, accept_hosts=("chatgpt.com", "auth.openai.com"))
-        submit_email(driver, new_email, attempts=2)
-        new_session = _complete_login(driver, new_email, password, totp_secret, fetch_session, progress)
-        observed_new = _session_email(new_session)
-        if observed_new.lower() != new_email.lower():
-            raise RuntimeError(f"换绑后登录邮箱校验失败：期望 {new_email}，实际 {observed_new or '空'}")
-        access_token = str(new_session.get("accessToken") or "").strip()
-        if not access_token:
-            raise RuntimeError("换绑后重新登录成功，但 /api/auth/session 未返回 accessToken")
+        try:
+            progress("relogin_new", f"清理旧登录态并使用替换邮箱重新登录：{new_email}")
+            _clear_login_state(driver)
+            safe_get(driver, "https://chatgpt.com/auth/login", timeout=45, attempts=2, accept_hosts=("chatgpt.com", "auth.openai.com"))
+            submit_email(driver, new_email, attempts=2)
+            new_session = _complete_login(driver, new_email, password, totp_secret, fetch_session, progress)
+            observed_new = _session_email(new_session)
+            if observed_new.lower() != new_email.lower():
+                raise RuntimeError(f"换绑后登录邮箱校验失败：期望 {new_email}，实际 {observed_new or '空'}")
+            access_token = str(new_session.get("accessToken") or "").strip()
+            if not access_token:
+                raise RuntimeError("换绑后重新登录成功，但 /api/auth/session 未返回 accessToken")
+        except RebindOutcomeUnknown:
+            raise
+        except Exception as exc:
+            raise RebindOutcomeUnknown(
+                new_email,
+                f"服务端已显示邮箱更新完成，但新邮箱重新登录/AT 刷新失败：{type(exc).__name__}: {str(exc)[:300]}",
+            ) from exc
         progress("verified", "新邮箱登录和 accessToken 校验完成")
         return {"email": observed_new, "access_token": access_token, "session": new_session, "roxy_profile_id": opened.profile_id}
     finally:
@@ -324,4 +358,3 @@ def perform_email_rebind(
                 pass
         if not settings.KEEP_BROWSER_OPEN:
             client.cleanup_profile(opened)
-

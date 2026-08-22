@@ -23,3 +23,4 @@ KEEP_BROWSER_OPEN = os.getenv("EMAIL_REBIND_KEEP_BROWSER_OPEN", "0").strip().low
 OTP_MAX_WAIT = max(30, int(os.getenv("EMAIL_REBIND_OTP_MAX_WAIT", "150")))
 OTP_POLL_INTERVAL = max(1.0, float(os.getenv("EMAIL_REBIND_OTP_POLL_INTERVAL", "3")))
 MAIL_VERIFY_TLS = os.getenv("EMAIL_REBIND_MAIL_VERIFY_TLS", "1").strip().lower() not in {"0", "false", "no"}
+MAX_REPLACEMENT_ATTEMPTS = max(1, min(int(os.getenv("EMAIL_REBIND_MAX_REPLACEMENT_ATTEMPTS", "5")), 50))

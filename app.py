@@ -52,6 +52,13 @@ def create_app(*, recover: bool = True) -> Flask:
             return jsonify({"ok": False, "error": "未识别到替换邮箱格式：邮箱----API取码地址", **result}), 400
         return jsonify({"ok": True, **result})
 
+    @app.post("/api/replacements/<int:replacement_id>/restore")
+    def api_restore_replacement(replacement_id: int):
+        row = store.restore_replacement(replacement_id)
+        if row is None:
+            return jsonify({"ok": False, "error": "替换邮箱不存在或当前不是失败状态"}), 409
+        return jsonify({"ok": True, "item": row})
+
     @app.post("/api/pairs/preview")
     def api_preview():
         data = request.get_json(silent=True) or {}

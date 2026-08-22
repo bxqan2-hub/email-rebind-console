@@ -19,6 +19,7 @@
 
     <section class="stats" id="stats"></section>
     <div class="eligibility-note"><strong>执行前检查</strong><span>新邮箱不能已绑定其他 OpenAI 账号；账号需可使用 Settings → Account 自助换绑。单账号最多 24 小时 2 次、生命周期 20 次。</span></div>
+    <div class="logic-note"><strong>自动轮换规则</strong><span>收不到新邮箱验证码、取码 API 超时或新邮箱已被占用：立即把该邮箱标记为“不可用”，同一原账号自动占用号池中的下一个邮箱继续。Roxy、原账号登录或账号资格错误：停止该账号并释放尚未判坏的邮箱。号池耗尽或达到轮换上限时，账号保留失败原因，等待补充号池后重试。</span></div>
 
     <section class="view" id="view-workspace">
       <div class="grid two">
@@ -48,7 +49,7 @@
     </section>
 
     <section class="view hidden" id="view-pool">
-      <article class="card"><div class="card-head"><div><h2>替换邮箱号池</h2><p>私有 API 地址不会返回浏览器，只显示是否已配置。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>替换邮箱</th><th>API</th><th>状态</th><th>绑定原邮箱</th></tr></thead><tbody id="poolBody"></tbody></table></div></article>
+      <article class="card"><div class="card-head"><div><h2>替换邮箱号池</h2><p>失败邮箱会保留原因并退出自动配对；确认邮箱/API 修复后可手动重新启用。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>替换邮箱</th><th>API</th><th>状态</th><th>绑定原邮箱</th><th>失败原因</th><th>操作</th></tr></thead><tbody id="poolBody"></tbody></table></div></article>
     </section>
 
     <section class="view hidden" id="view-tasks">

@@ -151,7 +151,8 @@ def import_replacement_emails(text: str) -> dict:
                 inserted += 1
             else:
                 updated += 1
-                if row.get("status") not in {"reserved", "used"}:
+                # 已隔离的失败邮箱必须显式重新启用，重复导入不能悄悄回到可用池。
+                if row.get("status") not in {"reserved", "used", "failed"}:
                     row["status"] = "available"
                     row["error"] = ""
             row["api_url"] = item["api_url"]
@@ -187,6 +188,9 @@ def summary() -> dict:
             "accounts_success": sum(1 for row in accounts if row.get("status") == "success"),
             "replacement_total": len(replacements),
             "replacement_available": sum(1 for row in replacements if row.get("status") == "available"),
+            "replacement_failed": sum(1 for row in replacements if row.get("status") == "failed"),
+            "replacement_review": sum(1 for row in replacements if row.get("status") == "review"),
+            "accounts_review": sum(1 for row in accounts if row.get("status") == "review"),
             "tasks_active": sum(1 for row in tasks if row.get("status") in {"queued", "running"}),
             "tasks_failed": sum(1 for row in tasks if row.get("status") == "failed"),
         }
@@ -241,6 +245,7 @@ def reserve_batch(account_ids: Iterable[int] | None = None) -> list[dict]:
                 "new_email": pair["new_email"],
                 "status": "queued",
                 "stage": "queued",
+                "attempt": 1,
                 "message": "已完成一对一占用，等待 Roxy 浏览器",
                 "created_at": now,
             }
@@ -255,6 +260,182 @@ def reserve_batch(account_ids: Iterable[int] | None = None) -> list[dict]:
         _write(_REPLACEMENTS, replacements)
         _write(_TASKS, tasks)
         return created
+
+
+def finish_replacement_failure(task_id: int, error: str, failure_code: str) -> bool:
+    """隔离收不到验证码/已占用的替换邮箱，并释放原账号等待自动轮换。"""
+    with _LOCK:
+        tasks = _read(_TASKS)
+        accounts = _read(_ACCOUNTS)
+        replacements = _read(_REPLACEMENTS)
+        task = next((row for row in tasks if int(row.get("id") or 0) == int(task_id)), None)
+        if not task:
+            return False
+        account = next((row for row in accounts if int(row.get("id") or 0) == int(task.get("account_id") or 0)), None)
+        replacement = next((row for row in replacements if int(row.get("id") or 0) == int(task.get("replacement_id") or 0)), None)
+        now = _now()
+        message = str(error or "替换邮箱不可用")[:600]
+        code = str(failure_code or "replacement_failed")[:80]
+        task.update({
+            "status": "failed", "stage": "replacement_failed", "message": message,
+            "error": message, "failure_code": code, "retryable": True,
+            "completed_at": now, "updated_at": now,
+        })
+        if account:
+            account.update({
+                "status": "ready", "error": message, "last_replacement_failure": message,
+                "replacement_attempts": int(task.get("attempt") or 1), "updated_at": now,
+            })
+            account.pop("active_task_id", None)
+        if replacement:
+            replacement.update({
+                "status": "failed", "failure_code": code, "failure_reason": message,
+                "failed_at": now, "updated_at": now,
+                "failure_count": int(replacement.get("failure_count") or 0) + 1,
+                "bound_old_email": task.get("old_email"),
+            })
+            replacement.pop("active_task_id", None)
+        _write(_TASKS, tasks)
+        _write(_ACCOUNTS, accounts)
+        _write(_REPLACEMENTS, replacements)
+        return True
+
+
+def reserve_retry(previous_task_id: int) -> dict | None:
+    """为同一原账号原子占用下一个可用替换邮箱，并建立可追溯的新任务。"""
+    with _LOCK:
+        tasks = _read(_TASKS)
+        accounts = _read(_ACCOUNTS)
+        replacements = _read(_REPLACEMENTS)
+        previous = next((row for row in tasks if int(row.get("id") or 0) == int(previous_task_id)), None)
+        if not previous:
+            return None
+        if previous.get("status") != "failed" or previous.get("stage") != "replacement_failed":
+            return None
+        account = next((row for row in accounts if int(row.get("id") or 0) == int(previous.get("account_id") or 0)), None)
+        replacement = next((
+            row for row in sorted(replacements, key=lambda item: int(item.get("id") or 0))
+            if row.get("status") == "available"
+        ), None)
+        if not account or not replacement or account.get("status") == "success":
+            return None
+        now = _now()
+        attempt = int(previous.get("attempt") or 1) + 1
+        task = {
+            "id": _next_id(tasks),
+            "account_id": int(account.get("id") or 0),
+            "replacement_id": int(replacement.get("id") or 0),
+            "old_email": account.get("old_email"),
+            "new_email": replacement.get("email"),
+            "status": "queued", "stage": "auto_retry", "attempt": attempt,
+            "root_task_id": int(previous.get("root_task_id") or previous.get("id") or 0),
+            "retry_of_task_id": int(previous.get("id") or 0),
+            "message": f"第 {attempt} 次尝试：已自动切换替换邮箱，等待 Roxy 浏览器",
+            "created_at": now, "updated_at": now,
+        }
+        tasks.append(task)
+        previous["next_task_id"] = task["id"]
+        previous["message"] = f"{str(previous.get('message') or '')[:420]}；已自动切换到 {replacement.get('email')}"
+        previous["updated_at"] = now
+        account.update({"status": "queued", "active_task_id": task["id"], "updated_at": now})
+        replacement.update({
+            "status": "reserved", "active_task_id": task["id"],
+            "bound_old_email": account.get("old_email"), "updated_at": now,
+        })
+        _write(_TASKS, tasks)
+        _write(_ACCOUNTS, accounts)
+        _write(_REPLACEMENTS, replacements)
+        return dict(task)
+
+
+def rotate_failed_replacement(task_id: int, error: str, failure_code: str, max_attempts: int) -> dict:
+    """在同一临界区隔离坏邮箱并优先为原账号占用下一个，避免并发抢走替换邮箱。"""
+    with _LOCK:
+        context = get_task_context(task_id)
+        if not context:
+            return {"next_task": None, "reason": "missing_task"}
+        attempt = int(context["task"].get("attempt") or 1)
+        finish_replacement_failure(task_id, error, failure_code)
+        limit = max(1, int(max_attempts or 1))
+        if attempt >= limit:
+            message = f"已达到自动轮换上限 {limit} 次；最后失败：{error}"
+            mark_retry_exhausted(task_id, message)
+            return {"next_task": None, "reason": "attempt_limit", "message": message}
+        next_task = reserve_retry(task_id)
+        if next_task:
+            return {"next_task": next_task, "reason": "rotated"}
+        message = f"替换邮箱已标记不可用；号池没有更多可用邮箱。最后失败：{error}"
+        mark_retry_exhausted(task_id, message)
+        return {"next_task": None, "reason": "pool_exhausted", "message": message}
+
+
+def finish_review_failure(task_id: int, new_email: str, error: str) -> None:
+    """换绑结果不确定时同时冻结账号和替换邮箱，禁止重复换绑造成身份错位。"""
+    with _LOCK:
+        tasks = _read(_TASKS)
+        accounts = _read(_ACCOUNTS)
+        replacements = _read(_REPLACEMENTS)
+        task = next((row for row in tasks if int(row.get("id") or 0) == int(task_id)), None)
+        if not task:
+            return
+        account = next((row for row in accounts if int(row.get("id") or 0) == int(task.get("account_id") or 0)), None)
+        replacement = next((row for row in replacements if int(row.get("id") or 0) == int(task.get("replacement_id") or 0)), None)
+        now = _now()
+        clean_email = str(new_email or task.get("new_email") or "").strip()
+        message = str(error or "换绑结果待人工核验")[:600]
+        task.update({
+            "status": "failed", "stage": "manual_review", "message": message,
+            "error": message, "retryable": False, "completed_at": now, "updated_at": now,
+        })
+        if account:
+            account.update({
+                "status": "review", "new_email": clean_email, "current_email": clean_email,
+                "email_change_uncertain": True, "error": message, "updated_at": now,
+            })
+            account.pop("active_task_id", None)
+        if replacement:
+            replacement.update({
+                "status": "review", "failure_code": "outcome_unknown", "failure_reason": message,
+                "failed_at": now, "updated_at": now, "bound_old_email": task.get("old_email"),
+            })
+            replacement.pop("active_task_id", None)
+        _write(_TASKS, tasks)
+        _write(_ACCOUNTS, accounts)
+        _write(_REPLACEMENTS, replacements)
+
+
+def mark_retry_exhausted(task_id: int, message: str) -> None:
+    """号池耗尽或达到轮换上限时，把原账号留在可人工重试的失败态。"""
+    with _LOCK:
+        tasks = _read(_TASKS)
+        accounts = _read(_ACCOUNTS)
+        task = next((row for row in tasks if int(row.get("id") or 0) == int(task_id)), None)
+        if not task:
+            return
+        account = next((row for row in accounts if int(row.get("id") or 0) == int(task.get("account_id") or 0)), None)
+        now = _now()
+        clean = str(message or "没有更多可用替换邮箱")[:600]
+        task.update({"auto_retry_status": "exhausted", "message": clean, "updated_at": now})
+        if account:
+            account.update({"status": "failed", "error": clean, "updated_at": now})
+            account.pop("active_task_id", None)
+        _write(_TASKS, tasks)
+        _write(_ACCOUNTS, accounts)
+
+
+def restore_replacement(replacement_id: int) -> dict | None:
+    """人工确认接口/邮箱恢复后，将失败邮箱重新放回可用池。"""
+    with _LOCK:
+        rows = _read(_REPLACEMENTS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(replacement_id)), None)
+        if not row or row.get("status") != "failed":
+            return None
+        now = _now()
+        row.update({"status": "available", "restored_at": now, "updated_at": now})
+        for key in ("error", "failure_code", "failure_reason", "failed_at", "active_task_id", "bound_old_email"):
+            row.pop(key, None)
+        _write(_REPLACEMENTS, rows)
+        return _public_replacement(row)
 
 
 def get_task_context(task_id: int) -> dict | None:
@@ -308,6 +489,8 @@ def finish_success(task_id: int, result: dict) -> None:
             "status": "success", "current_email": verified_email, "new_email": verified_email,
             "access_token": access_token, "rebound_at": now, "updated_at": now,
         })
+        account.pop("active_task_id", None)
+        account.pop("error", None)
         replacement.update({
             "status": "used", "used_at": now, "updated_at": now,
             "bound_old_email": task.get("old_email"), "bound_account_id": account.get("id"),
@@ -343,10 +526,19 @@ def finish_failure(task_id: int, error: str) -> None:
 
 
 def recover_interrupted_tasks() -> int:
-    active_ids = [int(row.get("id") or 0) for row in _read(_TASKS) if row.get("status") in {"queued", "running"}]
-    for task_id in active_ids:
-        finish_failure(task_id, "分站进程重启，原任务已释放，可重新开始")
-    return len(active_ids)
+    active = [row for row in _read(_TASKS) if row.get("status") in {"queued", "running"}]
+    uncertain_stages = {"submit_new_email_otp", "changed", "relogin_new", "verified"}
+    for row in active:
+        task_id = int(row.get("id") or 0)
+        if str(row.get("stage") or "") in uncertain_stages:
+            finish_review_failure(
+                task_id,
+                str(row.get("new_email") or ""),
+                "分站在验证码提交/邮箱变更后重启，结果待人工核验，已冻结账号和替换邮箱",
+            )
+        else:
+            finish_failure(task_id, "分站进程重启，原任务已释放，可重新开始")
+    return len(active)
 
 
 def export_success_lines() -> list[str]:
@@ -364,4 +556,3 @@ def export_success_lines() -> list[str]:
             if all(str(row.get(key) or "").strip() for key in ("password", "totp_secret", "access_token"))
             and str(row.get("new_email") or row.get("current_email") or "").strip()
         ]
-

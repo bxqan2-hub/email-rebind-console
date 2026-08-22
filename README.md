@@ -25,3 +25,17 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 邮箱 API 默认校验 HTTPS 证书；只有内部自签名接口需要在启动前设置
 `EMAIL_REBIND_MAIL_VERIFY_TLS=0`。也可用 `EMAIL_REBIND_PORT`、
 `EMAIL_REBIND_WORKERS`、`EMAIL_REBIND_OTP_MAX_WAIT` 调整端口、并发和取码超时。
+
+## 失败处理状态机
+
+| 失败位置 | 替换邮箱 | 原账号 | 后续动作 |
+| --- | --- | --- | --- |
+| API 无新验证码、取码超时、新邮箱已占用 | 标记 `failed`，保存原因和失败次数 | 保持原身份 | 原子占用下一个可用邮箱并自动重试 |
+| Roxy、原账号登录、账号资格在换绑完成前失败 | 释放回 `available` | 标记失败并保存原因 | 人工重试原账号，不浪费邮箱 |
+| 验证码已提交但结果未知，或已换绑后新邮箱登录/AT 刷新失败 | 标记 `review` | 记录可能的新邮箱并标记 `review` | 冻结双方，避免再次换绑造成身份错位 |
+| 换绑和新 AT 校验成功 | 标记 `used` | 标记成功 | 进入四段格式导出 |
+| 号池耗尽或达到自动轮换上限 | 保留全部失败标记 | 标记失败并写明原因 | 补充号池后重新选择账号运行 |
+
+失败邮箱不会因重复导入而自动恢复。确认邮箱或 API 已修好后，在“替换邮箱号池”
+点击“重新启用”。自动轮换默认最多 5 次，可用
+`EMAIL_REBIND_MAX_REPLACEMENT_ATTEMPTS` 调整。

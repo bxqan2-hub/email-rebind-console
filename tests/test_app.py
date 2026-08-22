@@ -30,6 +30,28 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(started.get_json()["submitted"], 1)
                 self.assertEqual(client.get("/api/export").status_code, 200)
 
+    def test_failed_replacement_can_be_restored_by_route(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("bad@example.com----https://mail.example/bad")
+                task = store.reserve_batch()[0]
+                store.finish_replacement_failure(task["id"], "没有验证码", "otp_unavailable")
+                client = app.create_app(recover=False).test_client()
+                response = client.post(f"/api/replacements/{task['replacement_id']}/restore")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["item"]["status"], "available")
+
+    def test_page_explains_automatic_rotation_and_failed_pool_controls(self):
+        client = app.create_app(recover=False).test_client()
+        html = client.get("/").get_data(as_text=True)
+        self.assertIn("自动轮换规则", html)
+        self.assertIn("失败原因", html)
+        script = Path("static/app.js").read_text(encoding="utf-8")
+        self.assertIn("data-restore-replacement", script)
+        self.assertIn("replacement_failed", script)
+
 
 if __name__ == "__main__":
     unittest.main()
