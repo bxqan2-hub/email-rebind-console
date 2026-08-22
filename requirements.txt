@@ -1,0 +1,5 @@
+Flask>=3.0,<4
+requests>=2.31,<3
+selenium>=4.20,<5
+pyotp>=2.9,<3
+

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>邮箱换绑工作台</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">R</span><div><strong>Rebind Console</strong><small>独立换绑分站 · :{{ port }}</small></div></div>
+    <button class="nav active" data-view="workspace">换绑工作台</button>
+    <button class="nav" data-view="pool">替换邮箱号池</button>
+    <button class="nav" data-view="tasks">任务记录</button>
+    <div class="side-note">与主站仅通过文本格式联动；本分站不读写主站账号文件。</div>
+  </aside>
+  <main>
+    <header><div><p class="eyebrow">EMAIL REBIND</p><h1>邮箱换绑工作台</h1><p class="sub">主站账号导入 → 替换邮箱一对一绑定 → Roxy 自动换绑 → 新邮箱登录刷新 AT</p></div><div class="health"><span></span>本地服务在线</div></header>
+
+    <section class="stats" id="stats"></section>
+    <div class="eligibility-note"><strong>执行前检查</strong><span>新邮箱不能已绑定其他 OpenAI 账号；账号需可使用 Settings → Account 自助换绑。单账号最多 24 小时 2 次、生命周期 20 次。</span></div>
+
+    <section class="view" id="view-workspace">
+      <div class="grid two">
+        <article class="card">
+          <div class="card-head"><div><span class="step">01</span><h2>导入主站账号</h2></div><span class="format">邮箱 · 密码 · 2FA</span></div>
+          <p>直接粘贴主站“复制所选账号密码2FA”的内容。</p>
+          <textarea id="accountImport" placeholder="old@example.com----OpenAI密码----MFA Secret"></textarea>
+          <button class="btn primary" id="importAccounts">识别并导入</button>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><span class="step violet">02</span><h2>导入替换邮箱</h2></div><span class="format">邮箱 · API</span></div>
+          <p>号池固定命名为“替换邮箱”，API 地址只保存在分站服务端。</p>
+          <textarea id="replacementImport" placeholder="new@example.com----https://mail-api.example/code"></textarea>
+          <button class="btn violet" id="importReplacements">加入替换邮箱号池</button>
+        </article>
+      </div>
+
+      <article class="card pairing-card">
+        <div class="card-head responsive"><div><span class="step green">03</span><h2>一对一配对</h2><p>勾选待换绑账号；系统按号池顺序自动绑定等量新邮箱。</p></div><div class="actions"><label>并发 <input id="workers" type="number" min="1" max="10" value="2"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn success" id="startRebind">开始换绑</button></div></div>
+        <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectAll"></th><th>原邮箱</th><th>账号状态</th><th>一对一替换邮箱</th></tr></thead><tbody id="pairBody"></tbody></table></div>
+      </article>
+
+      <article class="card result-card">
+        <div class="card-head responsive"><div><span class="step amber">04</span><h2>完成结果</h2><p>导出格式：新邮箱----原密码----原2FA----新AT；主站可直接识别并迁移分组。</p></div><div class="actions"><button class="btn ghost" id="copyExport">复制完成结果</button><a class="btn primary link" href="/api/export">下载 TXT</a></div></div>
+        <div id="recentTasks" class="task-list"></div>
+      </article>
+    </section>
+
+    <section class="view hidden" id="view-pool">
+      <article class="card"><div class="card-head"><div><h2>替换邮箱号池</h2><p>私有 API 地址不会返回浏览器，只显示是否已配置。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>替换邮箱</th><th>API</th><th>状态</th><th>绑定原邮箱</th></tr></thead><tbody id="poolBody"></tbody></table></div></article>
+    </section>
+
+    <section class="view hidden" id="view-tasks">
+      <article class="card"><div class="card-head"><div><h2>换绑任务记录</h2><p>每个阶段均持久化；进程意外退出会自动释放号池占用。</p></div><button class="btn ghost" id="refreshTasks">刷新</button></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>原邮箱 → 新邮箱</th><th>状态</th><th>当前阶段</th><th>说明</th><th>完成时间</th></tr></thead><tbody id="taskBody"></tbody></table></div></article>
+    </section>
+  </main>
+  <div id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
