@@ -114,6 +114,9 @@ def _configure_logging() -> None:
             logging.StreamHandler(),
         ],
     )
+    # 页面会按固定间隔读取任务状态；正常的 200/304 访问日志不应刷屏。
+    # WARNING/ERROR 仍写入 logs/rebind.log，方便排查启动和任务异常。
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
 if __name__ == "__main__":
