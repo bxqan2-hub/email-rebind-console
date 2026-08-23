@@ -40,8 +40,8 @@ class ProxyFailure(RuntimeError):
     """换绑代理在创建 Roxy 环境前检测失败；工作线程应隔离并换下一条。"""
 
 
-class _HarApiUnavailable(RuntimeError):
-    """抓包确认的换绑 API 在当前页面版本不可用，可退回 DOM 流程。"""
+class ProtocolChangeFailure(RuntimeError):
+    """登录已完成，但协议换绑端点或会话条件不满足。"""
 
 
 def _load_main_roxy():
@@ -385,7 +385,7 @@ def _api_error_code(data) -> str:
     return ""
 
 
-def _change_email_via_har_api(
+def _change_email_via_protocol(
     driver,
     *,
     session: dict,
@@ -393,20 +393,20 @@ def _change_email_via_har_api(
     api_url: str,
     progress: Callable[[str, str], None],
 ) -> None:
-    """按已验证 HAR 时序执行 eligibility → begin → verify → logout。"""
+    """登录完成后直接执行 eligibility → begin → verify 协议换绑。"""
     account_id = _session_account_id(session)
     if not account_id:
-        raise _HarApiUnavailable("登录 session 中没有 chatgpt_account_id")
+        raise ProtocolChangeFailure("登录 session 中没有 chatgpt_account_id，协议换绑已停止")
 
-    progress("check_email_eligibility", "检查当前账号的邮箱换绑资格")
+    progress("protocol_eligibility", "登录成功；通过协议检查邮箱换绑资格")
     eligibility = _browser_json_request(
         driver, "GET", "/backend-api/accounts/change_email/eligibility",
     )
     if not eligibility.get("ok") or int(eligibility.get("status") or 0) in {404, 405}:
-        raise _HarApiUnavailable("换绑资格接口不可用")
+        raise ProtocolChangeFailure("协议换绑资格接口不可用")
     status = int(eligibility.get("status") or 0)
     if status in {401, 403}:
-        raise _HarApiUnavailable("换绑资格接口要求页面登录态")
+        raise ProtocolChangeFailure("协议换绑资格接口拒绝当前登录态")
     if status != 200:
         raise RuntimeError(f"检查换绑资格失败：HTTP {status}")
     eligibility_data = eligibility.get("data") if isinstance(eligibility.get("data"), dict) else {}
@@ -416,7 +416,7 @@ def _change_email_via_har_api(
     if eligibility_type == "social":
         raise RuntimeError("社交登录账号需要先在 ChatGPT Security 中设置密码，再使用失败重试")
     if eligibility_type not in {"", "password", "social_password"}:
-        raise _HarApiUnavailable(f"未知换绑资格类型：{eligibility_type}")
+        raise ProtocolChangeFailure(f"协议返回未知换绑资格类型：{eligibility_type}")
     remove_social_subs = eligibility_type == "social_password"
 
     previous_otp = None
@@ -425,7 +425,7 @@ def _change_email_via_har_api(
     except Exception:
         pass
 
-    progress("submit_new_email", "提交替换邮箱并请求新邮箱验证码")
+    progress("protocol_begin", "通过协议提交替换邮箱并请求验证码")
     begin_body = {"email": new_email}
     if remove_social_subs:
         begin_body["remove_social_subs"] = True
@@ -438,9 +438,9 @@ def _change_email_via_har_api(
     begin_status = int(begin.get("status") or 0)
     begin_code = _api_error_code(begin.get("data"))
     if begin_status in {404, 405}:
-        raise _HarApiUnavailable("换绑开始接口不可用")
+        raise ProtocolChangeFailure("协议换绑开始接口不可用")
     if begin_status == 401 or begin_code == "reauth_required":
-        raise _HarApiUnavailable("换绑接口要求页面重新认证")
+        raise ProtocolChangeFailure("协议换绑要求重新认证；请使用失败重试重新登录")
     if begin_status == 429 or begin_code in {"email_change_rate_limited", "email_change_limit_reached"}:
         raise RuntimeError("当前账号已达到邮箱换绑频率或次数限制")
     if begin_status in {400, 409, 422}:
@@ -453,7 +453,7 @@ def _change_email_via_har_api(
     ):
         raise RuntimeError(f"提交替换邮箱失败：HTTP {begin_status}")
 
-    progress("wait_new_email_otp", "通过替换邮箱 API 等待新验证码")
+    progress("protocol_wait_otp", "协议已发码；通过替换邮箱 API 等待新验证码")
     try:
         code = mail_api.wait_for_new_otp(
             api_url, new_email, previous=previous_otp,
@@ -465,7 +465,7 @@ def _change_email_via_har_api(
             f"替换邮箱未取得新验证码：{type(exc).__name__}: {str(exc)[:240]}",
         ) from exc
 
-    progress("submit_new_email_otp", "提交替换邮箱验证码")
+    progress("protocol_verify", "通过协议提交替换邮箱验证码")
     verify_body = {"email": new_email, "code": code}
     if remove_social_subs:
         verify_body["remove_social_subs"] = True
@@ -490,50 +490,9 @@ def _change_email_via_har_api(
     if not (isinstance(verified.get("data"), dict) and verified["data"].get("success") is True):
         raise RebindOutcomeUnknown(new_email, "换绑验证码接口返回 200，但没有 success=true 确认")
 
-    # HAR 中 verify 的 200/{success:true} 是服务端提交点；/auth/logout 是网页
-    # onSuccess 回调产生的后续动作。直接同源 fetch 不会自动执行该回调，因此
-    # 这里以 200 为已换绑证据，并显式复刻退出动作，不能把 URL 未跳转误判为未知。
-    progress("changed", "服务端已确认邮箱更新；退出旧登录态")
-    try:
-        driver.execute_script("window.location.assign('/auth/logout')")
-    except Exception:
-        pass
-
-
-def _change_email_har_guided(
-    driver,
-    *,
-    session: dict,
-    old_email: str,
-    new_email: str,
-    password: str,
-    totp_secret: str,
-    source_api_url: str,
-    api_url: str,
-    safe_get,
-    progress: Callable[[str, str], None],
-) -> None:
-    """优先使用抓包确认的同源 API；仅在接口缺失且尚未 begin 时退回页面流程。"""
-    try:
-        _change_email_via_har_api(
-            driver, session=session, new_email=new_email,
-            api_url=api_url, progress=progress,
-        )
-        return
-    except _HarApiUnavailable as exc:
-        logger.warning("HAR 换绑接口不可用，切换 DOM 流程：%s", exc)
-        progress("open_settings", "换绑接口不可用，切换 ChatGPT 设置页面流程")
-    _open_account_settings(driver, old_email, safe_get, progress)
-    _change_email(
-        driver,
-        old_email=old_email,
-        new_email=new_email,
-        password=password,
-        totp_secret=totp_secret,
-        source_api_url=source_api_url,
-        api_url=api_url,
-        progress=progress,
-    )
+    # verify 的 200/{success:true} 是服务端提交点。协议版不再打开 Settings、
+    # 点击邮箱行或等待网页 logout 回调；调用方会立即清理旧登录态并登录新邮箱。
+    progress("changed", "协议已确认邮箱更新；准备清理旧登录态")
 
 
 def _complete_login(
@@ -618,197 +577,6 @@ def _complete_login(
     raise TimeoutError("账号登录超时；未取得 ChatGPT accessToken")
 
 
-def _open_account_settings(driver, old_email: str, safe_get, progress: Callable[[str, str], None]) -> None:
-    progress("open_settings", "打开 ChatGPT 设置 → Account")
-    safe_get(driver, "https://chatgpt.com/#settings/Account", timeout=35, attempts=2, accept_hosts=("chatgpt.com",))
-    time.sleep(3)
-    deadline = time.monotonic() + 35
-    while time.monotonic() < deadline:
-        clicked = driver.execute_script(r"""
-        const oldEmail = String(arguments[0] || '').toLowerCase();
-        const visible = el => !!el && !el.disabled && (el.offsetWidth || el.offsetHeight || el.getClientRects().length)
-          && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
-        const editModal = document.querySelector('[data-testid="modal-edit-email"]');
-        const reauthInput = document.querySelector('input[type="password"], input[name="password"], input[autocomplete="one-time-code"]');
-        if (visible(editModal) || visible(reauthInput)) return 'ready';
-        const emailRow = document.querySelector('[data-testid="account-info-email"]');
-        if (visible(emailRow)) {
-          const target = emailRow.matches('button, a, [role="button"]') ? emailRow
-            : emailRow.querySelector('button, a, [role="button"]')
-              || emailRow.closest('button, a, [role="button"]') || emailRow;
-          target.scrollIntoView({block:'center'}); target.click(); return 'clicked';
-        }
-        const all = [...document.querySelectorAll('button, a, [role="button"], [tabindex="0"]')].filter(visible);
-        const norm = el => `${el.innerText || ''} ${el.getAttribute('aria-label') || ''} ${el.title || ''}`.trim().toLowerCase();
-        let target = all.find(el => oldEmail && norm(el).includes(oldEmail));
-        if (!target) target = all.find(el => /change email|update email|edit email|更改邮箱|换绑邮箱|修改邮箱|邮箱地址|email address/.test(norm(el)));
-        if (target) { target.scrollIntoView({block:'center'}); target.click(); return 'clicked'; }
-        const accountHref = [...document.querySelectorAll('a[href*="#settings/Account" i]')].find(visible);
-        if (accountHref) { accountHref.click(); return 'account'; }
-        const account = all.find(el => /^(account|账户|账号|アカウント|계정)$/.test(norm(el)));
-        if (account) { account.click(); return 'account'; }
-        const settings = all.find(el => /^(settings|设置|設定|설정)$/.test(norm(el)));
-        if (settings) { settings.click(); return 'settings'; }
-        return '';
-        """, old_email)
-        if clicked == "ready":
-            return
-        time.sleep(1)
-    raise RuntimeError("设置 → Account 中未找到可点击的当前邮箱；该账号可能不满足自助换绑条件")
-
-
-def _change_email(
-    driver,
-    *,
-    old_email: str,
-    new_email: str,
-    password: str,
-    totp_secret: str,
-    source_api_url: str = "",
-    api_url: str,
-    progress: Callable[[str, str], None],
-) -> None:
-    previous_otp = None
-    previous_source_otp = None
-    try:
-        previous_otp = mail_api.read_current_otp(api_url, new_email, timeout=4)
-    except Exception:
-        pass
-    if source_api_url:
-        try:
-            previous_source_otp = mail_api.read_current_otp(source_api_url, old_email, timeout=4)
-        except Exception:
-            pass
-    deadline = time.monotonic() + 210
-    new_email_sent = False
-    otp_sent = False
-    source_otp_sent = False
-    password_sent_at = 0.0
-    totp_sent_at = 0.0
-    while time.monotonic() < deadline:
-        text = _body_text(driver)
-        lowered = text.lower()
-        current = str(getattr(driver, "current_url", "") or "")
-        if otp_sent and (
-            "/auth/logout" in current
-            or "auth/login" in current
-            or any(marker in lowered for marker in ("email updated", "email changed", "邮箱已更新", "邮箱地址已更改"))
-        ):
-            progress("changed", "服务端已完成邮箱更新并退出旧登录态")
-            return
-
-        password_input = _visible_input(driver, ['input[type="password"]', 'input[name="password"]'])
-        if password_input and time.monotonic() - password_sent_at > 8:
-            if not str(password or "").strip():
-                raise RuntimeError("换绑前重新验证要求密码，但原邮箱使用的是 API 取码登录")
-            progress("reauth_password", "换绑前重新验证账号密码")
-            _set_value(driver, password_input, password)
-            _submit_near(driver, password_input)
-            password_sent_at = time.monotonic()
-            time.sleep(2)
-            continue
-
-        numeric_input = _visible_input(driver, [
-            '[data-testid="modal-add-email-otp"] input[name="verification_code"]',
-            'input[name="verification_code"]',
-            'input[name*="totp" i]', 'input[id*="totp" i]', 'input[autocomplete="one-time-code"]',
-            'input[inputmode="numeric"]', 'input[name="code"]',
-        ])
-        totp_page = any(marker in lowered for marker in (
-            "authenticator", "two-factor", "2fa", "verification app", "身份验证器", "动态验证码", "인증 앱",
-        ))
-        if numeric_input and totp_page and not otp_sent and time.monotonic() - totp_sent_at > 8:
-            if not str(totp_secret or "").strip():
-                raise RuntimeError("换绑前重新验证要求 2FA，但原邮箱记录没有 MFA Secret")
-            progress("reauth_totp", "换绑前重新验证 2FA")
-            _set_otp_value(driver, numeric_input, pyotp.TOTP(totp_secret.replace(" ", "")).now())
-            _submit_near(driver, numeric_input)
-            totp_sent_at = time.monotonic()
-            time.sleep(2)
-            continue
-
-        source_email_otp_page = (
-            numeric_input and not new_email_sent and not totp_page
-            and any(marker in lowered for marker in (
-                "verification", "one-time", "sent", "code", "验证码", "認証コード", "인증 코드",
-            ))
-        )
-        if source_email_otp_page and not source_otp_sent:
-            if not str(source_api_url or "").strip():
-                raise RuntimeError("换绑前重新验证要求原邮箱验证码，但原邮箱记录没有 API 取码地址")
-            progress("reauth_email_otp", "通过原邮箱 API 等待重新验证验证码")
-            code = mail_api.wait_for_new_otp(
-                source_api_url, old_email, previous=previous_source_otp,
-                max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
-                stop_check=lambda: _visible_input(driver, [
-                    'input[name="verification_code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
-                    'input[name="code"]',
-                ]) is None,
-            )
-            progress("submit_reauth_email_otp", "提交原邮箱重新验证验证码")
-            _set_otp_value(driver, numeric_input, code)
-            _submit_near(driver, numeric_input)
-            source_otp_sent = True
-            time.sleep(2)
-            continue
-
-        email_input = _visible_input(driver, [
-            '[data-testid="modal-edit-email"] input[name="email"]',
-            'input[name="email"][type="email"]', 'input[type="email"]',
-            'input[name*="newEmail" i]', 'input[id*="newEmail" i]',
-            'input[autocomplete="email"]',
-        ])
-        change_context = bool(driver.execute_script(
-            "return !!document.querySelector('[data-testid=\"modal-edit-email\"]')"
-        )) or any(marker in lowered for marker in (
-            "new email", "change email", "update email", "新的邮箱", "新邮箱", "更改邮箱", "修改邮箱",
-        ))
-        if email_input and not new_email_sent and change_context:
-            progress("submit_new_email", "填写并提交替换邮箱")
-            _set_value(driver, email_input, new_email)
-            _submit_near(driver, email_input)
-            new_email_sent = True
-            time.sleep(3)
-            continue
-
-        email_otp_modal = bool(driver.execute_script(
-            "return !!document.querySelector('[data-testid=\"modal-add-email-otp\"]')"
-        ))
-        email_otp_page = numeric_input and new_email_sent and not totp_page and (
-            email_otp_modal or any(marker in lowered for marker in (
-                "verification", "one-time", "sent", "code", "验证码", "認証コード", "인증 코드",
-            ))
-        )
-        if email_otp_page and not otp_sent:
-            progress("wait_new_email_otp", "通过替换邮箱 API 等待新验证码")
-            try:
-                code = mail_api.wait_for_new_otp(
-                    api_url, new_email, previous=previous_otp,
-                    max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
-                    stop_check=lambda: _visible_input(driver, ['input[name="verification_code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[name="code"]']) is None,
-                )
-            except Exception as exc:
-                raise ReplacementEmailFailure(
-                    "otp_unavailable",
-                    f"替换邮箱 {new_email} 未取得新验证码：{type(exc).__name__}: {str(exc)[:300]}",
-                ) from exc
-            progress("submit_new_email_otp", "提交替换邮箱验证码")
-            _set_otp_value(driver, numeric_input, code)
-            _submit_near(driver, numeric_input)
-            otp_sent = True
-            time.sleep(3)
-            continue
-
-        if new_email_sent and any(marker in lowered for marker in ("already exists", "already in use", "已被使用", "已存在", "邮箱已占用")):
-            raise ReplacementEmailFailure("email_in_use", f"替换邮箱 {new_email} 已被其他账号占用")
-        if new_email_sent and any(marker in lowered for marker in ("not eligible", "无法更改", "cannot change")):
-            raise RuntimeError("当前账号不符合自助换绑条件")
-        time.sleep(1)
-    if otp_sent:
-        raise RebindOutcomeUnknown(new_email, "新邮箱验证码已提交，但没有确认最终换绑结果")
-    raise TimeoutError("邮箱换绑流程超时；没有观察到换绑完成后的退出登录状态")
-
-
 def _clear_login_state(driver) -> None:
     for origin in ("https://chatgpt.com", "https://auth.openai.com"):
         try:
@@ -833,7 +601,7 @@ def perform_email_rebind(
     progress: Callable[[str, str], None] | None = None,
     proxy_verified: Callable[[dict], None] | None = None,
 ) -> dict:
-    """执行完整闭环：旧邮箱登录 → Settings/Account 换绑 → 新邮箱登录 → 读取新 AT。"""
+    """执行完整闭环：旧邮箱登录 → 协议换绑 → 新邮箱登录 → 读取新 AT。"""
     progress = progress or (lambda _stage, _message: None)
     RoxyBrowserClient, build_driver, center_window, fetch_session, safe_get, submit_email, probe_driver_exit = _load_main_roxy()
     clean_proxy = str(proxy_url or "").strip()
@@ -892,16 +660,11 @@ def perform_email_rebind(
         if observed_old and observed_old.lower() != old_email.lower():
             raise RuntimeError(f"Roxy 登录态邮箱不匹配：期望 {old_email}，实际 {observed_old}")
 
-        _change_email_har_guided(
+        _change_email_via_protocol(
             driver,
             session=old_session,
-            old_email=old_email,
             new_email=new_email,
-            password=password,
-            totp_secret=totp_secret,
-            source_api_url=source_api_url,
             api_url=api_url,
-            safe_get=safe_get,
             progress=progress,
         )
 

@@ -78,7 +78,8 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 
 浏览器打开 <http://127.0.0.1:5091/>。
 
-换绑遵循 ChatGPT 网页流程：登录 → Settings → Account → 点击当前邮箱 → 新邮箱验证 → 退出 → 用新邮箱重新登录并读取 `/api/auth/session` 的新 AT。
+换绑采用“浏览器登录 + 协议换绑”：Roxy 完成原账号登录后，不再打开 Settings、
+不点击当前邮箱，直接调用邮箱换绑协议；服务端确认成功后清理旧登录态，使用新邮箱重新登录并读取 `/api/auth/session` 的新 AT。
 
 ## HAR 验证的换绑契约
 
@@ -86,19 +87,13 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 `POST /api/accounts/email-otp/validate` →
 `GET /backend-api/accounts/change_email/eligibility` →
 `POST /backend-api/accounts/change_email/begin` →
-`POST /backend-api/accounts/change_email/verify` → `GET /auth/logout`。
-其中 `verify` 的 `200`/`success=true` 是服务端已经换绑的提交点；`/auth/logout` 是网页成功回调触发的后续退出动作，不能再只等待 `/auth/login`。
+`POST /backend-api/accounts/change_email/verify` → 网页版随后访问 `GET /auth/logout`。
+其中 `verify` 的 `200`/`success=true` 是服务端已经换绑的提交点；协议版以这个响应为成功依据，随后直接清理 Roxy 旧登录态，不依赖网页跳转。
 
 同版本前端资源确认 `begin` 使用 `{email}`，`verify` 使用 `{email, code}`；
-`social_password` 类型的两个请求还带 `remove_social_subs=true`。DOM 兜底使用版本化稳定标识：
-
-```text
-[data-testid="account-info-email"]
-[data-testid="modal-edit-email"] input[name="email"]
-[data-testid="modal-add-email-otp"] input[name="verification_code"]
-```
-
-实现会优先在当前 Roxy 登录页面内执行同源请求；接口缺失或需要页面重新认证时才退回 DOM 流程。
+`social_password` 类型的两个请求还带 `remove_social_subs=true`。
+协议请求在已登录的 Roxy 页面上下文内同源执行，只使用当前窗口 Cookie 和 `chatgpt-account-id`，不会导出 Cookie 或 AT。
+接口缺失、资格不允许或服务端要求重新认证时，任务直接进入可重试失败态，不再回退 Settings DOM 流程。
 抓包原文件、Cookie、验证码、邮箱、AT 和请求头值均不写入仓库或日志。
 
 ## 成功窗口与 AT 刷新
