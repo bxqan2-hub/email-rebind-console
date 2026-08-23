@@ -8,6 +8,24 @@ import store
 
 
 class StoreTests(unittest.TestCase):
+    def test_authenticated_proxy_formats_default_to_socks5h(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_PROXIES", root / "proxies.json"):
+                result = store.import_proxies(
+                    "proxy-one.example:3000:user-a:pass-a\n"
+                    "proxy-two.example:3001----user-b----pass-b"
+                )
+
+                self.assertEqual(result["parsed"], 2)
+                self.assertEqual(
+                    [row["display"] for row in store.list_proxies()],
+                    [
+                        "socks5h://***:***@proxy-one.example:3000",
+                        "socks5h://***:***@proxy-two.example:3001",
+                    ],
+                )
+
     def test_source_import_keeps_email_url_in_original_accounts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

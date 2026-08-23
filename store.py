@@ -97,9 +97,11 @@ def _normalize_proxy_url(raw: str, username: str = "", password: str = "") -> st
                 host, port = chunks[0], chunks[1]
                 username = username or chunks[2]
                 password = password or ":".join(chunks[3:])
-                value = f"http://{host}:{port}"
+                # 供应商的 host:port:user:pass 通常是 SOCKS5 凭据；此前误按
+                # HTTP CONNECT 导致 1024proxy 节点全部在创建 Roxy 前失败。
+                value = f"socks5h://{host}:{port}"
             else:
-                value = f"http://{value}"
+                value = f"{'socks5h' if username else 'http'}://{value}"
     parsed = urlsplit(value)
     scheme = str(parsed.scheme or "").lower()
     if scheme not in _SUPPORTED_PROXY_SCHEMES:
@@ -140,7 +142,7 @@ def _public_proxy(row: dict) -> dict:
 
 
 def import_proxies(text: str) -> dict:
-    """导入换绑代理池；支持 URL、host:port、host:port:user:pass。"""
+    """导入换绑代理池；带认证但未写协议的格式默认按 SOCKS5 处理。"""
     parsed: list[dict] = []
     invalid: list[dict] = []
     for number, raw in enumerate(str(text or "").splitlines(), start=1):
