@@ -228,6 +228,41 @@ def _visible_input(driver, selectors: list[str]):
     return driver.execute_script(script, selectors)
 
 
+def _submit_login_email_allow_password(
+    driver,
+    email: str,
+    password: str,
+    totp_secret: str,
+    submit_email,
+    *,
+    attempts: int = 2,
+) -> str:
+    """提交登录邮箱；密码+2FA账号允许停在登录密码页交给本地登录器。
+
+    主站的通用邮箱提交器默认把 ``login_password`` 判为注册账号不可用，
+    这对换绑站的“邮箱----密码----2FA”原账号是不对的：该页面正是下一步
+    应该填写密码和 TOTP 的登录流程。仅当两项凭据都已导入且页面/异常明确
+    表示登录密码页时放行；邮箱 API 账号仍保持原有失败行为。
+    """
+    try:
+        return str(submit_email(driver, email, attempts=attempts) or "")
+    except Exception as exc:
+        if not (str(password or "").strip() and str(totp_secret or "").strip()):
+            raise
+        current = str(getattr(driver, "current_url", "") or "").lower()
+        message = str(exc or "")
+        is_password_page = (
+            "auth.openai.com/log-in/password" in current
+            or "login_password" in message.lower()
+            or "existing-account password page" in message.lower()
+            or "登录密码页" in message
+        )
+        if not is_password_page:
+            raise
+        logger.info("%s 已识别为密码+2FA原账号，允许进入登录密码页：%s", email, current or message[:180])
+        return "login_password"
+
+
 def _set_value(driver, element, value: str) -> None:
     driver.execute_script(r"""
     const el = arguments[0], value = arguments[1];
@@ -708,7 +743,9 @@ def _login_with_replacement_email(
             attempts=2,
             accept_hosts=("chatgpt.com", "auth.openai.com"),
         )
-        submit_email(driver, email, attempts=2)
+        _submit_login_email_allow_password(
+            driver, email, password, totp_secret, submit_email, attempts=2,
+        )
         try:
             session = _complete_login(
                 driver,
@@ -920,7 +957,9 @@ def perform_email_rebind(
             except Exception:
                 pass
         safe_get(driver, "https://chatgpt.com/auth/login", timeout=45, attempts=2, accept_hosts=("chatgpt.com", "auth.openai.com"))
-        submit_email(driver, old_email, attempts=2)
+        _submit_login_email_allow_password(
+            driver, old_email, password, totp_secret, submit_email, attempts=2,
+        )
         old_session = _complete_login(
             driver, old_email, password, totp_secret, fetch_session, progress,
             email_api_url=source_api_url, previous_email_otp=previous_old_login_otp,
