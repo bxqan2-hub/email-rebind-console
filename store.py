@@ -323,6 +323,49 @@ def import_source_accounts(text: str) -> dict:
     return {"parsed": len(parsed), "inserted": inserted, "updated": updated, "invalid": invalid}
 
 
+def import_smart_entries(text: str) -> dict:
+    """混合识别原账号与替换邮箱，并将邮箱+URL自动送入替换邮箱号池。"""
+    account_lines: list[str] = []
+    replacement_lines: list[str] = []
+    invalid: list[dict] = []
+
+    for number, raw in enumerate(str(text or "").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = _parts(line)
+        email_valid = bool(parts and _EMAIL_RE.match(parts[0]))
+        if email_valid and len(parts) >= 3 and parts[1] and parts[2]:
+            account_lines.append(line)
+        elif (
+            email_valid
+            and len(parts) >= 2
+            and parts[1].lower().startswith(("http://", "https://"))
+        ):
+            replacement_lines.append(line)
+        else:
+            invalid.append({
+                "line": number,
+                "reason": "需要：邮箱----密码----MFA Secret，或 邮箱----http(s)://API取码地址",
+            })
+
+    empty = {"parsed": 0, "inserted": 0, "updated": 0, "invalid": []}
+    accounts = import_source_accounts("\n".join(account_lines)) if account_lines else dict(empty)
+    replacements = import_replacement_emails("\n".join(replacement_lines)) if replacement_lines else dict(empty)
+    return {
+        "parsed": int(accounts["parsed"]) + int(replacements["parsed"]),
+        "inserted": int(accounts["inserted"]) + int(replacements["inserted"]),
+        "updated": int(accounts["updated"]) + int(replacements["updated"]),
+        "invalid": invalid,
+        "account_parsed": int(accounts["parsed"]),
+        "account_inserted": int(accounts["inserted"]),
+        "account_updated": int(accounts["updated"]),
+        "replacement_parsed": int(replacements["parsed"]),
+        "replacement_inserted": int(replacements["inserted"]),
+        "replacement_updated": int(replacements["updated"]),
+    }
+
+
 def import_replacement_emails(text: str) -> dict:
     """导入“替换邮箱”号池：新邮箱----API取码地址。"""
     parsed: list[dict] = []

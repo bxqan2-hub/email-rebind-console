@@ -9,6 +9,23 @@ import store
 
 
 class AppTests(unittest.TestCase):
+    def test_account_import_route_smartly_accepts_email_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"):
+                client = app.create_app(recover=False).test_client()
+                response = client.post("/api/accounts/import", json={
+                    "text": "new@example.com----https://mail.example/code",
+                })
+
+                self.assertEqual(response.status_code, 200)
+                body = response.get_json()
+                self.assertEqual(body["account_parsed"], 0)
+                self.assertEqual(body["replacement_parsed"], 1)
+                self.assertEqual(store.list_accounts(), [])
+                self.assertEqual(store.list_replacements()[0]["email"], "new@example.com")
+
     def test_import_preview_start_and_export_routes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -59,6 +76,9 @@ class AppTests(unittest.TestCase):
         self.assertIn("data-refresh-at", script)
         self.assertIn("data-close-roxy", script)
         self.assertIn("成功窗口规则", html)
+        self.assertIn("智能导入", html)
+        self.assertIn("邮箱+URL", html)
+        self.assertIn("account_parsed", script)
 
     def test_success_account_can_refresh_at_and_close_roxy(self):
         with tempfile.TemporaryDirectory() as tmp:

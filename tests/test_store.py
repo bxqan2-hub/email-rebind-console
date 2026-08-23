@@ -8,6 +8,43 @@ import store
 
 
 class StoreTests(unittest.TestCase):
+    def test_smart_import_routes_account_and_email_url_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"):
+                result = store.import_smart_entries(
+                    "old@example.com----Password!----JBSWY3DPEHPK3PXP\n"
+                    "new@example.com----https://mail.example/code\n"
+                    "bad input"
+                )
+
+                self.assertEqual(result["parsed"], 2)
+                self.assertEqual(result["account_parsed"], 1)
+                self.assertEqual(result["replacement_parsed"], 1)
+                self.assertEqual(result["inserted"], 2)
+                self.assertEqual(result["invalid"], [{
+                    "line": 3,
+                    "reason": "需要：邮箱----密码----MFA Secret，或 邮箱----http(s)://API取码地址",
+                }])
+                self.assertEqual(store.list_accounts()[0]["old_email"], "old@example.com")
+                self.assertEqual(store.list_replacements()[0]["email"], "new@example.com")
+                self.assertTrue(store.list_replacements()[0]["has_api"])
+
+    def test_smart_import_accepts_email_url_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"):
+                result = store.import_smart_entries(
+                    "mail@example.com====https://mail.example/api?email={email}"
+                )
+
+                self.assertEqual(result["account_parsed"], 0)
+                self.assertEqual(result["replacement_parsed"], 1)
+                self.assertEqual(store.list_accounts(), [])
+                self.assertEqual(store.list_replacements()[0]["email"], "mail@example.com")
+
     def test_main_format_pair_and_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

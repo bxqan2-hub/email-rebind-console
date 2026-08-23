@@ -26,14 +26,14 @@
     <section class="view" id="view-workspace">
       <div class="grid three">
         <article class="card">
-          <div class="card-head"><div><span class="step">01</span><h2>导入主站账号</h2></div><span class="format">邮箱 · 密码 · 2FA</span></div>
-          <p>直接粘贴主站“复制所选账号密码2FA”的内容。</p>
-          <textarea id="accountImport" placeholder="old@example.com----OpenAI密码----MFA Secret"></textarea>
-          <button class="btn primary" id="importAccounts">识别并导入</button>
+          <div class="card-head"><div><span class="step">01</span><h2>智能导入</h2></div><span class="format">账号 / 邮箱URL</span></div>
+          <p>可混合粘贴：邮箱+密码+2FA 自动加入原账号；邮箱+URL 自动加入“替换邮箱”号池。</p>
+          <textarea id="accountImport" placeholder="old@example.com----OpenAI密码----MFA Secret&#10;new@example.com----https://mail-api.example/code"></textarea>
+          <button class="btn primary" id="importAccounts">智能识别并导入</button>
         </article>
         <article class="card">
           <div class="card-head"><div><span class="step violet">02</span><h2>导入替换邮箱</h2></div><span class="format">邮箱 · API</span></div>
-          <p>号池固定命名为“替换邮箱”，API 地址只保存在分站服务端。</p>
+          <p>也可单独粘贴邮箱+URL；号池固定命名为“替换邮箱”，API 地址只保存在分站服务端。</p>
           <textarea id="replacementImport" placeholder="new@example.com----https://mail-api.example/code"></textarea>
           <button class="btn violet" id="importReplacements">加入替换邮箱号池</button>
         </article>
