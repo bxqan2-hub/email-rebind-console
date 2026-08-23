@@ -31,6 +31,10 @@ class RebindOutcomeUnknown(RuntimeError):
         self.new_email = str(new_email or "").strip()
 
 
+class ProxyFailure(RuntimeError):
+    """换绑代理在创建 Roxy 环境前检测失败；工作线程应隔离并换下一条。"""
+
+
 def _load_main_roxy():
     if not settings.MAIN_SITE_PATH.exists():
         raise RuntimeError(f"未找到主站目录：{settings.MAIN_SITE_PATH}")
@@ -45,8 +49,12 @@ def _load_main_roxy():
         _submit_email_and_wait_next,
     )
     from core.roxybrowser_client import RoxyBrowserClient  # type: ignore
+    from core.browser_exit_geo import probe_selenium_driver_exit_geo  # type: ignore
 
-    return RoxyBrowserClient, _build_driver, _center_browser_window, _fetch_chatgpt_session, _safe_get, _submit_email_and_wait_next
+    return (
+        RoxyBrowserClient, _build_driver, _center_browser_window, _fetch_chatgpt_session,
+        _safe_get, _submit_email_and_wait_next, probe_selenium_driver_exit_geo,
+    )
 
 
 def _body_text(driver) -> str:
@@ -295,20 +303,49 @@ def perform_email_rebind(
     password: str,
     totp_secret: str,
     api_url: str,
+    proxy_url: str,
     progress: Callable[[str, str], None] | None = None,
+    proxy_verified: Callable[[dict], None] | None = None,
 ) -> dict:
     """执行完整闭环：旧邮箱登录 → Settings/Account 换绑 → 新邮箱登录 → 读取新 AT。"""
     progress = progress or (lambda _stage, _message: None)
-    RoxyBrowserClient, build_driver, center_window, fetch_session, safe_get, submit_email = _load_main_roxy()
-    client = RoxyBrowserClient(profile_proxy=settings.ROXY_PROXY)
-    progress("open_roxy", "创建并打开 Roxy 指纹浏览器环境")
-    opened = client.open_profile(require_proxy_exit_ip=False)
+    RoxyBrowserClient, build_driver, center_window, fetch_session, safe_get, submit_email, probe_driver_exit = _load_main_roxy()
+    clean_proxy = str(proxy_url or "").strip()
+    if not clean_proxy:
+        raise ProxyFailure("任务没有分配换绑代理，已阻止 Roxy 直连")
+    client = RoxyBrowserClient(profile_proxy=clean_proxy)
+    opened = None
     driver = None
     try:
+        progress("check_proxy", "检测换绑代理出口；失败时自动切换下一条")
+        try:
+            opened = client.open_profile(require_proxy_exit_ip=True)
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {str(exc)[:400]}"
+            lowered = message.lower()
+            if any(marker in lowered for marker in ("代理出口", "代理格式", "代理协议", "proxy")):
+                raise ProxyFailure(message) from exc
+            raise
+        exit_geo = dict(getattr(opened, "preflight_exit_geo", {}) or {})
+        progress("open_roxy", f"代理预检通过（出口 {exit_geo.get('ip') or '已确认'}），创建并打开 Roxy 环境")
         driver = build_driver(opened)
         center_window(driver)
         driver.set_page_load_timeout(60)
         driver.set_script_timeout(60)
+
+        # 代理 URL 在本机可用不代表 Roxy 窗口一定正确套用；登录前从实际
+        # Selenium 窗口再次读取出口，失败仍属于可安全切换代理的阶段。
+        progress("check_proxy", "从 Roxy 窗口复核实际代理出口")
+        browser_exit_geo = probe_driver_exit(
+            driver, label="Roxy换绑", restore_page_load_timeout=60,
+            restore_script_timeout=60, attempts=1, retry_delay=0.5,
+        )
+        if not browser_exit_geo.get("ip"):
+            raise ProxyFailure("Roxy 窗口代理出口复核失败；登录尚未开始")
+        exit_geo = dict(browser_exit_geo)
+        if callable(proxy_verified):
+            proxy_verified(exit_geo)
+        progress("open_roxy", f"Roxy 窗口代理检测通过（出口 {exit_geo.get('ip')}）")
 
         progress("login_old", f"使用原邮箱登录：{old_email}")
         safe_get(driver, "https://chatgpt.com/auth/login", timeout=45, attempts=2, accept_hosts=("chatgpt.com", "auth.openai.com"))
@@ -349,12 +386,15 @@ def perform_email_rebind(
                 f"服务端已显示邮箱更新完成，但新邮箱重新登录/AT 刷新失败：{type(exc).__name__}: {str(exc)[:300]}",
             ) from exc
         progress("verified", "新邮箱登录和 accessToken 校验完成")
-        return {"email": observed_new, "access_token": access_token, "session": new_session, "roxy_profile_id": opened.profile_id}
+        return {
+            "email": observed_new, "access_token": access_token, "session": new_session,
+            "roxy_profile_id": opened.profile_id, "proxy_exit_geo": exit_geo,
+        }
     finally:
         if driver is not None and not settings.KEEP_BROWSER_OPEN:
             try:
                 driver.quit()
             except Exception:
                 pass
-        if not settings.KEEP_BROWSER_OPEN:
+        if opened is not None and not settings.KEEP_BROWSER_OPEN:
             client.cleanup_profile(opened)

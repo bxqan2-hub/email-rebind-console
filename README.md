@@ -25,6 +25,23 @@
 - 替换邮箱号池：`新邮箱----API取码地址`
 - 分站 → 主站：`新邮箱----原OpenAI密码----原MFA Secret----新accessToken`
 
+## 换绑代理池
+
+在分站“导入换绑代理”中手动粘贴，每行一条。支持：
+
+```text
+http://user:pass@host:port
+socks5h://user:pass@host:port
+host:port
+host:port:user:pass
+host:port----用户名----密码
+```
+
+每个原账号在任务开始时随机取得一条代理，并在同一账号的替换邮箱轮换过程中保持使用。
+创建 Roxy 环境前必须先取得代理出口 IP；检测失败的代理会记录失败原因、退出随机池，
+同一账号立即随机选择下一条，替换邮箱不会因此被判坏。确认代理修复后，可在“换绑代理池”
+中点击“重新启用”。代理认证信息只保存在分站 `data/换绑代理.json`，页面只显示掩码。
+
 主站导入时使用“密码 + MFA Secret”识别原账号，因此不需要在导出结果中暴露原邮箱；识别后会把账号邮箱和 AT 更新为新值，从全部旧分组移除旧邮箱，再加入用户当前选择的分组。
 
 ## 启动
@@ -42,6 +59,7 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 邮箱 API 默认校验 HTTPS 证书；只有内部自签名接口需要在启动前设置
 `EMAIL_REBIND_MAIL_VERIFY_TLS=0`。也可用 `EMAIL_REBIND_PORT`、
 `EMAIL_REBIND_WORKERS`、`EMAIL_REBIND_OTP_MAX_WAIT` 调整端口、并发和取码超时。
+`EMAIL_REBIND_MAX_PROXY_ATTEMPTS` 控制单账号最多自动检测多少条代理，默认 5。
 
 ## 失败处理状态机
 
@@ -52,6 +70,9 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 | 验证码已提交但结果未知，或已换绑后新邮箱登录/AT 刷新失败 | 标记 `review` | 记录可能的新邮箱并标记 `review` | 冻结双方，避免再次换绑造成身份错位 |
 | 换绑和新 AT 校验成功 | 标记 `used` | 标记成功 | 进入四段格式导出 |
 | 号池耗尽或达到自动轮换上限 | 保留全部失败标记 | 标记失败并写明原因 | 补充号池后重新选择账号运行 |
+
+代理失败独立于替换邮箱状态机：Roxy 创建前出口检测失败只隔离代理并自动换下一条；
+代理池耗尽或达到代理切换上限时释放当前替换邮箱，并把原账号保留为可重试失败状态。
 
 失败邮箱不会因重复导入而自动恢复。确认邮箱或 API 已修好后，在“替换邮箱号池”
 点击“重新启用”。自动轮换默认最多 5 次，可用

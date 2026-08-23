@@ -16,13 +16,15 @@ class AppTests(unittest.TestCase):
                 patch.object(store, "_ACCOUNTS", root / "accounts.json"),
                 patch.object(store, "_REPLACEMENTS", root / "replacements.json"),
                 patch.object(store, "_TASKS", root / "tasks.json"),
+                patch.object(store, "_PROXIES", root / "proxies.json"),
                 patch("app.worker.submit_tasks", return_value=1),
             )
-            with patches[0], patches[1], patches[2], patches[3]:
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 client = app.create_app(recover=False).test_client()
                 self.assertEqual(client.get("/health").status_code, 200)
                 self.assertEqual(client.post("/api/accounts/import", json={"text": "old@example.com----Password!----JBSWY3DPEHPK3PXP"}).status_code, 200)
                 self.assertEqual(client.post("/api/replacements/import", json={"text": "new@example.com----https://mail.example/code"}).status_code, 200)
+                self.assertEqual(client.post("/api/proxies/import", json={"text": "http://user:pass@proxy.example:8080"}).status_code, 200)
                 preview = client.post("/api/pairs/preview", json={"account_ids": []}).get_json()
                 self.assertEqual(preview["pairs"][0]["new_email"], "new@example.com")
                 started = client.post("/api/rebind/start", json={"account_ids": [], "workers": 2})
@@ -46,11 +48,14 @@ class AppTests(unittest.TestCase):
     def test_page_explains_automatic_rotation_and_failed_pool_controls(self):
         client = app.create_app(recover=False).test_client()
         html = client.get("/").get_data(as_text=True)
-        self.assertIn("自动轮换规则", html)
+        self.assertIn("双重自动轮换", html)
         self.assertIn("失败原因", html)
+        self.assertIn("换绑代理池", html)
         script = Path("static/app.js").read_text(encoding="utf-8")
         self.assertIn("data-restore-replacement", script)
         self.assertIn("replacement_failed", script)
+        self.assertIn("data-restore-proxy", script)
+        self.assertIn("proxy_available", script)
 
 
 if __name__ == "__main__":

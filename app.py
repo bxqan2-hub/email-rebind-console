@@ -32,8 +32,10 @@ def create_app(*, recover: bool = True) -> Flask:
             "summary": store.summary(),
             "accounts": store.list_accounts(),
             "replacements": store.list_replacements(),
+            "proxies": store.list_proxies(),
             "tasks": store.list_tasks(),
             "pool_name": "替换邮箱",
+            "proxy_pool_name": "换绑代理",
         })
 
     @app.post("/api/accounts/import")
@@ -59,6 +61,25 @@ def create_app(*, recover: bool = True) -> Flask:
             return jsonify({"ok": False, "error": "替换邮箱不存在或当前不是失败状态"}), 409
         return jsonify({"ok": True, "item": row})
 
+    @app.post("/api/proxies/import")
+    def api_import_proxies():
+        data = request.get_json(silent=True) or {}
+        result = store.import_proxies(str(data.get("text") or ""))
+        if not result["parsed"]:
+            return jsonify({
+                "ok": False,
+                "error": "未识别到代理格式：URL、host:port、host:port:user:pass，或 host:port----用户名----密码",
+                **result,
+            }), 400
+        return jsonify({"ok": True, **result})
+
+    @app.post("/api/proxies/<int:proxy_id>/restore")
+    def api_restore_proxy(proxy_id: int):
+        row = store.restore_proxy(proxy_id)
+        if row is None:
+            return jsonify({"ok": False, "error": "代理不存在或当前不是失败状态"}), 409
+        return jsonify({"ok": True, "item": row})
+
     @app.post("/api/pairs/preview")
     def api_preview():
         data = request.get_json(silent=True) or {}
@@ -80,6 +101,8 @@ def create_app(*, recover: bool = True) -> Flask:
             workers = max(1, min(int(data.get("workers") or settings.DEFAULT_WORKERS), 10))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "workers 必须是 1~10 的整数"}), 400
+        if int(store.summary().get("proxy_available") or 0) < 1:
+            return jsonify({"ok": False, "error": "换绑代理池没有可用代理，请先手动导入"}), 409
         tasks = store.reserve_batch(ids)
         if not tasks:
             return jsonify({"ok": False, "error": "没有可一对一配对的待换绑账号和替换邮箱"}), 409

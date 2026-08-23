@@ -11,7 +11,7 @@ class StoreTests(unittest.TestCase):
     def test_main_format_pair_and_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"):
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"):
                 imported = store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 pool = store.import_replacement_emails("new@example.com----https://mail.example/code")
                 self.assertEqual(imported["inserted"], 1)
@@ -28,7 +28,7 @@ class StoreTests(unittest.TestCase):
     def test_failure_releases_replacement(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"):
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 task = store.reserve_batch()[0]
@@ -39,7 +39,7 @@ class StoreTests(unittest.TestCase):
     def test_bad_replacement_is_quarantined_and_next_email_is_reserved(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"):
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("bad@example.com----https://mail.example/bad\ngood@example.com----https://mail.example/good")
                 first = store.reserve_batch()[0]
@@ -67,7 +67,7 @@ class StoreTests(unittest.TestCase):
     def test_restart_after_otp_submission_freezes_uncertain_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"):
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("maybe@example.com----https://mail.example/maybe")
                 task = store.reserve_batch()[0]

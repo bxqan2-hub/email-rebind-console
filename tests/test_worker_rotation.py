@@ -17,8 +17,9 @@ class WorkerRotationTests(unittest.TestCase):
                 patch.object(store, "_ACCOUNTS", root / "accounts.json"),
                 patch.object(store, "_REPLACEMENTS", root / "replacements.json"),
                 patch.object(store, "_TASKS", root / "tasks.json"),
+                patch.object(store, "_PROXIES", root / "proxies.json"),
             )
-            with storage[0], storage[1], storage[2], patch.object(worker.settings, "MAX_REPLACEMENT_ATTEMPTS", 5), patch.object(
+            with storage[0], storage[1], storage[2], storage[3], patch.object(worker.settings, "MAX_REPLACEMENT_ATTEMPTS", 5), patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), patch.object(
                 worker.roxy_flow,
                 "perform_email_rebind",
                 side_effect=[
@@ -31,6 +32,7 @@ class WorkerRotationTests(unittest.TestCase):
                     "bad@example.com----https://mail.example/bad\n"
                     "good@example.com----https://mail.example/good"
                 )
+                store.import_proxies("http://proxy.example:8080")
                 initial = store.reserve_batch()[0]
                 worker._run(initial["id"])
 
@@ -51,13 +53,14 @@ class WorkerRotationTests(unittest.TestCase):
     def test_pool_exhaustion_keeps_account_failed_with_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"), patch.object(
                 worker.roxy_flow,
                 "perform_email_rebind",
                 side_effect=roxy_flow.ReplacementEmailFailure("otp_unavailable", "没有验证码"),
             ):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("bad@example.com----https://mail.example/bad")
+                store.import_proxies("http://proxy.example:8080")
                 initial = store.reserve_batch()[0]
                 worker._run(initial["id"])
                 account = store.list_accounts()[0]
@@ -68,13 +71,14 @@ class WorkerRotationTests(unittest.TestCase):
     def test_unknown_post_change_result_is_frozen_for_manual_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"), patch.object(
                 worker.roxy_flow,
                 "perform_email_rebind",
                 side_effect=roxy_flow.RebindOutcomeUnknown("maybe@example.com", "验证码已提交但 AT 刷新失败"),
             ):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("maybe@example.com----https://mail.example/maybe")
+                store.import_proxies("http://proxy.example:8080")
                 initial = store.reserve_batch()[0]
                 worker._run(initial["id"])
                 account = store.list_accounts()[0]

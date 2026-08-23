@@ -11,6 +11,7 @@
     <div class="brand"><span class="brand-mark">R</span><div><strong>Rebind Console</strong><small>独立换绑分站 · :{{ port }}</small></div></div>
     <button class="nav active" data-view="workspace">换绑工作台</button>
     <button class="nav" data-view="pool">替换邮箱号池</button>
+    <button class="nav" data-view="proxies">换绑代理池</button>
     <button class="nav" data-view="tasks">任务记录</button>
     <div class="side-note">与主站仅通过文本格式联动；本分站不读写主站账号文件。</div>
   </aside>
@@ -19,10 +20,10 @@
 
     <section class="stats" id="stats"></section>
     <div class="eligibility-note"><strong>执行前检查</strong><span>新邮箱不能已绑定其他 OpenAI 账号；账号需可使用 Settings → Account 自助换绑。单账号最多 24 小时 2 次、生命周期 20 次。</span></div>
-    <div class="logic-note"><strong>自动轮换规则</strong><span>收不到新邮箱验证码、取码 API 超时或新邮箱已被占用：立即把该邮箱标记为“不可用”，同一原账号自动占用号池中的下一个邮箱继续。Roxy、原账号登录或账号资格错误：停止该账号并释放尚未判坏的邮箱。号池耗尽或达到轮换上限时，账号保留失败原因，等待补充号池后重试。</span></div>
+    <div class="logic-note"><strong>双重自动轮换</strong><span>每个账号先从“换绑代理”池随机选择一条，创建 Roxy 前检测真实出口；检测失败立即标记该代理并随机换下一条，不消耗替换邮箱。收不到新邮箱验证码、取码 API 超时或新邮箱已被占用时，才隔离该邮箱并为同一原账号换下一个邮箱。</span></div>
 
     <section class="view" id="view-workspace">
-      <div class="grid two">
+      <div class="grid three">
         <article class="card">
           <div class="card-head"><div><span class="step">01</span><h2>导入主站账号</h2></div><span class="format">邮箱 · 密码 · 2FA</span></div>
           <p>直接粘贴主站“复制所选账号密码2FA”的内容。</p>
@@ -35,15 +36,21 @@
           <textarea id="replacementImport" placeholder="new@example.com----https://mail-api.example/code"></textarea>
           <button class="btn violet" id="importReplacements">加入替换邮箱号池</button>
         </article>
+        <article class="card">
+          <div class="card-head"><div><span class="step amber">03</span><h2>导入换绑代理</h2></div><span class="format">每行一条</span></div>
+          <p>每个账号随机取一条；Roxy 创建前检测出口，失败代理自动退出分配并切换下一条。</p>
+          <textarea id="proxyImport" placeholder="http://user:pass@host:port&#10;socks5h://user:pass@host:port&#10;host:port:user:pass"></textarea>
+          <button class="btn primary" id="importProxies">加入换绑代理池</button>
+        </article>
       </div>
 
       <article class="card pairing-card">
-        <div class="card-head responsive"><div><span class="step green">03</span><h2>一对一配对</h2><p>勾选待换绑账号；系统按号池顺序自动绑定等量新邮箱。</p></div><div class="actions"><label>并发 <input id="workers" type="number" min="1" max="10" value="2"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn success" id="startRebind">开始换绑</button></div></div>
+        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对</h2><p>勾选待换绑账号；替换邮箱按顺序绑定，换绑代理在任务开始时随机选择。</p></div><div class="actions"><label>并发 <input id="workers" type="number" min="1" max="10" value="2"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn success" id="startRebind">开始换绑</button></div></div>
         <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectAll"></th><th>原邮箱</th><th>账号状态</th><th>一对一替换邮箱</th></tr></thead><tbody id="pairBody"></tbody></table></div>
       </article>
 
       <article class="card result-card">
-        <div class="card-head responsive"><div><span class="step amber">04</span><h2>完成结果</h2><p>导出格式：新邮箱----原密码----原2FA----新AT；主站可直接识别并迁移分组。</p></div><div class="actions"><button class="btn ghost" id="copyExport">复制完成结果</button><a class="btn primary link" href="/api/export">下载 TXT</a></div></div>
+        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>导出格式：新邮箱----原密码----原2FA----新AT；主站可直接识别并迁移分组。</p></div><div class="actions"><button class="btn ghost" id="copyExport">复制完成结果</button><a class="btn primary link" href="/api/export">下载 TXT</a></div></div>
         <div id="recentTasks" class="task-list"></div>
       </article>
     </section>
@@ -52,8 +59,12 @@
       <article class="card"><div class="card-head"><div><h2>替换邮箱号池</h2><p>失败邮箱会保留原因并退出自动配对；确认邮箱/API 修复后可手动重新启用。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>替换邮箱</th><th>API</th><th>状态</th><th>绑定原邮箱</th><th>失败原因</th><th>操作</th></tr></thead><tbody id="poolBody"></tbody></table></div></article>
     </section>
 
+    <section class="view hidden" id="view-proxies">
+      <article class="card"><div class="card-head"><div><h2>换绑代理池</h2><p>代理凭据只保存在分站服务端，页面仅显示掩码。检测失败会记录原因并停止自动分配；修复后可手动重新启用。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>代理</th><th>状态</th><th>成功/失败</th><th>最近出口</th><th>最近账号</th><th>失败原因</th><th>操作</th></tr></thead><tbody id="proxyPoolBody"></tbody></table></div></article>
+    </section>
+
     <section class="view hidden" id="view-tasks">
-      <article class="card"><div class="card-head"><div><h2>换绑任务记录</h2><p>每个阶段均持久化；进程意外退出会自动释放号池占用。</p></div><button class="btn ghost" id="refreshTasks">刷新</button></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>原邮箱 → 新邮箱</th><th>状态</th><th>当前阶段</th><th>说明</th><th>完成时间</th></tr></thead><tbody id="taskBody"></tbody></table></div></article>
+      <article class="card"><div class="card-head"><div><h2>换绑任务记录</h2><p>每个阶段、随机代理及切换次数均持久化；进程意外退出会自动释放邮箱号池占用。</p></div><button class="btn ghost" id="refreshTasks">刷新</button></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>原邮箱 → 新邮箱</th><th>换绑代理</th><th>状态</th><th>当前阶段</th><th>说明</th><th>完成时间</th></tr></thead><tbody id="taskBody"></tbody></table></div></article>
     </section>
   </main>
   <div id="toast"></div>

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import settings
 
@@ -18,6 +20,9 @@ _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _ACCOUNTS = settings.DATA_DIR / "source_accounts.json"
 _REPLACEMENTS = settings.DATA_DIR / "替换邮箱.json"
 _TASKS = settings.DATA_DIR / "rebind_tasks.json"
+_PROXIES = settings.DATA_DIR / "换绑代理.json"
+_PROXY_RANDOM = random.SystemRandom()
+_SUPPORTED_PROXY_SCHEMES = {"http", "https", "socks5", "socks5h"}
 
 
 def _now() -> str:
@@ -69,6 +74,208 @@ def _public_replacement(row: dict) -> dict:
         key: value for key, value in row.items()
         if key != "api_url"
     } | {"has_api": bool(row.get("api_url"))}
+
+
+def _clean_proxy_text(raw: str) -> str:
+    return str(raw or "").strip().strip("\"'").translate(str.maketrans({
+        "：": ":", "／": "/", "＠": "@", "．": ".",
+    }))
+
+
+def _normalize_proxy_url(raw: str, username: str = "", password: str = "") -> str:
+    """统一代理格式并返回 Roxy 可直接使用的 URL。"""
+    value = _clean_proxy_text(raw)
+    if not value:
+        raise ValueError("代理为空")
+    if "://" not in value:
+        if "@" in value:
+            value = f"http://{value}"
+        else:
+            chunks = value.split(":")
+            if len(chunks) >= 4 and chunks[1].isdigit():
+                host, port = chunks[0], chunks[1]
+                username = username or chunks[2]
+                password = password or ":".join(chunks[3:])
+                value = f"http://{host}:{port}"
+            else:
+                value = f"http://{value}"
+    parsed = urlsplit(value)
+    scheme = str(parsed.scheme or "").lower()
+    if scheme not in _SUPPORTED_PROXY_SCHEMES:
+        raise ValueError(f"不支持的代理协议：{scheme or '-'}")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("代理端口不是有效整数") from exc
+    if not parsed.hostname or not port or not (1 <= int(port) <= 65535):
+        raise ValueError("代理需要有效的 host:port")
+    user = str(username or (unquote(parsed.username) if parsed.username else "")).strip()
+    secret = str(password or (unquote(parsed.password) if parsed.password else "")).strip()
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    auth = ""
+    if user:
+        auth = quote(user, safe="")
+        if secret:
+            auth += f":{quote(secret, safe='')}"
+        auth += "@"
+    return urlunsplit((scheme, f"{auth}{host}:{port}", "", "", ""))
+
+
+def _proxy_display(proxy_url: str) -> str:
+    parsed = urlsplit(str(proxy_url or ""))
+    host = parsed.hostname or "-"
+    port = f":{parsed.port}" if parsed.port else ""
+    auth = "***:***@" if parsed.username or parsed.password else ""
+    return f"{parsed.scheme}://{auth}{host}{port}"
+
+
+def _public_proxy(row: dict) -> dict:
+    public = {key: value for key, value in row.items() if key != "proxy_url"}
+    public["display"] = _proxy_display(str(row.get("proxy_url") or ""))
+    public["has_auth"] = bool(urlsplit(str(row.get("proxy_url") or "")).username)
+    return public
+
+
+def import_proxies(text: str) -> dict:
+    """导入换绑代理池；支持 URL、host:port、host:port:user:pass。"""
+    parsed: list[dict] = []
+    invalid: list[dict] = []
+    for number, raw in enumerate(str(text or "").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = _parts(line)
+        try:
+            if len(parts) == 3:
+                proxy_url = _normalize_proxy_url(parts[0], parts[1], parts[2])
+            elif len(parts) > 1:
+                raise ValueError("认证代理需要：host:port----用户名----密码")
+            else:
+                proxy_url = _normalize_proxy_url(line)
+        except ValueError as exc:
+            invalid.append({"line": number, "reason": str(exc)})
+            continue
+        parsed.append({"proxy_url": proxy_url})
+
+    with _LOCK:
+        rows = _read(_PROXIES)
+        by_url = {str(row.get("proxy_url") or "").lower(): row for row in rows}
+        inserted = updated = 0
+        now = _now()
+        for item in parsed:
+            key = item["proxy_url"].lower()
+            row = by_url.get(key)
+            if row is None:
+                row = {
+                    "id": _next_id(rows), "proxy_url": item["proxy_url"],
+                    "status": "available", "created_at": now,
+                }
+                rows.append(row)
+                by_url[key] = row
+                inserted += 1
+            else:
+                updated += 1
+                # 与失败邮箱一致：重复导入不悄悄恢复坏代理，需人工重新启用。
+                if row.get("status") != "failed":
+                    row["status"] = "available"
+            row["updated_at"] = now
+        _write(_PROXIES, rows)
+    return {"parsed": len(parsed), "inserted": inserted, "updated": updated, "invalid": invalid}
+
+
+def list_proxies() -> list[dict]:
+    with _LOCK:
+        return [_public_proxy(row) for row in sorted(_read(_PROXIES), key=lambda item: int(item.get("id") or 0))]
+
+
+def pick_random_proxy(excluded_ids: Iterable[int] | None = None) -> dict | None:
+    excluded = {int(value) for value in (excluded_ids or [])}
+    with _LOCK:
+        rows = _read(_PROXIES)
+        candidates = [
+            row for row in rows
+            if row.get("status") == "available" and int(row.get("id") or 0) not in excluded
+        ]
+        if not candidates:
+            return None
+        row = _PROXY_RANDOM.choice(candidates)
+        now = _now()
+        row["assigned_count"] = int(row.get("assigned_count") or 0) + 1
+        row["last_assigned_at"] = now
+        row["updated_at"] = now
+        _write(_PROXIES, rows)
+        return dict(row) | {"display": _proxy_display(str(row.get("proxy_url") or ""))}
+
+
+def mark_proxy_success(proxy_id: int, *, task_id: int, old_email: str, exit_geo: dict | None = None) -> bool:
+    with _LOCK:
+        rows = _read(_PROXIES)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(proxy_id)), None)
+        if not row:
+            return False
+        now = _now()
+        geo = exit_geo or {}
+        row.update({
+            "status": "available", "success_count": int(row.get("success_count") or 0) + 1,
+            "last_success_at": now, "last_task_id": int(task_id),
+            "last_old_email": str(old_email or ""), "updated_at": now,
+        })
+        if geo.get("ip"):
+            row["last_exit_ip"] = str(geo.get("ip"))
+        if geo.get("country"):
+            row["last_country"] = str(geo.get("country"))
+        row.pop("last_error", None)
+        _write(_PROXIES, rows)
+        return True
+
+
+def mark_proxy_failure(proxy_id: int, *, task_id: int, old_email: str, error: str) -> bool:
+    with _LOCK:
+        rows = _read(_PROXIES)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(proxy_id)), None)
+        if not row:
+            return False
+        now = _now()
+        message = str(error or "代理检测失败")[:600]
+        row.update({
+            "status": "failed", "failure_reason": message, "last_error": message,
+            "failure_count": int(row.get("failure_count") or 0) + 1,
+            "failed_at": now, "last_task_id": int(task_id),
+            "last_old_email": str(old_email or ""), "updated_at": now,
+        })
+        _write(_PROXIES, rows)
+        return True
+
+
+def restore_proxy(proxy_id: int) -> dict | None:
+    with _LOCK:
+        rows = _read(_PROXIES)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(proxy_id)), None)
+        if not row or row.get("status") != "failed":
+            return None
+        now = _now()
+        row.update({"status": "available", "restored_at": now, "updated_at": now})
+        for key in ("failure_reason", "failed_at", "last_error"):
+            row.pop(key, None)
+        _write(_PROXIES, rows)
+        return _public_proxy(row)
+
+
+def assign_task_proxy(task_id: int, proxy: dict, proxy_attempt: int) -> bool:
+    with _LOCK:
+        tasks = _read(_TASKS)
+        task = next((row for row in tasks if int(row.get("id") or 0) == int(task_id)), None)
+        if not task:
+            return False
+        task.update({
+            "proxy_id": int(proxy.get("id") or 0),
+            "proxy_display": str(proxy.get("display") or _proxy_display(str(proxy.get("proxy_url") or ""))),
+            "proxy_attempt": int(proxy_attempt), "updated_at": _now(),
+        })
+        _write(_TASKS, tasks)
+        return True
 
 
 def import_source_accounts(text: str) -> dict:
@@ -181,6 +388,7 @@ def summary() -> dict:
     with _LOCK:
         accounts = _read(_ACCOUNTS)
         replacements = _read(_REPLACEMENTS)
+        proxies = _read(_PROXIES)
         tasks = _read(_TASKS)
         return {
             "accounts_total": len(accounts),
@@ -190,6 +398,9 @@ def summary() -> dict:
             "replacement_available": sum(1 for row in replacements if row.get("status") == "available"),
             "replacement_failed": sum(1 for row in replacements if row.get("status") == "failed"),
             "replacement_review": sum(1 for row in replacements if row.get("status") == "review"),
+            "proxy_total": len(proxies),
+            "proxy_available": sum(1 for row in proxies if row.get("status") == "available"),
+            "proxy_failed": sum(1 for row in proxies if row.get("status") == "failed"),
             "accounts_review": sum(1 for row in accounts if row.get("status") == "review"),
             "tasks_active": sum(1 for row in tasks if row.get("status") in {"queued", "running"}),
             "tasks_failed": sum(1 for row in tasks if row.get("status") == "failed"),
