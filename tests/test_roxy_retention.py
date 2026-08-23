@@ -68,7 +68,7 @@ class RoxyRetentionTests(unittest.TestCase):
         )
         return loaded, driver, client_box
 
-    def test_success_keeps_logged_in_window_and_close_button_closes_it(self):
+    def test_success_keeps_logged_in_window_and_close_button_deletes_profile(self):
         events = []
         loaded, _driver, _client_box = self._loaded(events)
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
@@ -90,8 +90,9 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertNotIn("cleanup", events)
         self.assertIn("profile-1", roxy_flow._RETAINED)
 
-        self.assertTrue(roxy_flow.close_retained_profile("profile-1"))
+        self.assertTrue(roxy_flow.delete_retained_profile("profile-1"))
         self.assertIn("close:profile-1", events)
+        self.assertIn("delete:profile-1", events)
         self.assertIn("driver.quit", events)
         self.assertNotIn("profile-1", roxy_flow._RETAINED)
 
@@ -113,6 +114,15 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertIn("delete:profile-1", events)
         self.assertFalse(roxy_flow._RETAINED)
 
+    def test_close_button_deletes_profile_after_service_restart(self):
+        events = []
+        loaded, _driver, _client_box = self._loaded(events)
+        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded):
+            self.assertTrue(roxy_flow.delete_retained_profile("profile-1"))
+
+        self.assertEqual(events, ["close:profile-1", "delete:profile-1"])
+        self.assertFalse(roxy_flow._RETAINED)
+
     def test_refresh_reuses_retained_driver_and_validates_new_email(self):
         events = []
         updated_session = {"user": {"email": "new@example.com"}, "accessToken": "at-plus"}
@@ -129,7 +139,7 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertEqual(result["email"], "new@example.com")
         self.assertNotIn("driver.quit", events)
 
-    def test_refresh_reopens_same_profile_after_window_was_closed(self):
+    def test_refresh_reopens_same_profile_after_service_restart(self):
         events = []
         session = {"user": {"email": "new@example.com"}, "accessToken": "at-reopened"}
         loaded, _driver, _client_box = self._loaded(events, fetch_session=lambda *_a, **_k: session)

@@ -163,6 +163,7 @@ class StoreTests(unittest.TestCase):
                 )
                 self.assertEqual(account["roxy_browser_status"], "open")
                 self.assertEqual(account["roxy_profile_id"], "profile-1")
+                self.assertEqual(store.get_success_access_token(account["id"]), "at-new")
                 self.assertEqual(store.summary()["roxy_open"], 1)
 
                 replacement_id = store.list_replacements()[0]["id"]
@@ -198,8 +199,9 @@ class StoreTests(unittest.TestCase):
                     ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
                 )
                 self.assertEqual(store.delete_source_account(account["id"])["reason"], "window_open")
-                closed = store.mark_roxy_profile_closed(account["id"])
-                self.assertEqual(closed["roxy_browser_status"], "closed")
+                deleted = store.mark_roxy_profile_deleted(account["id"])
+                self.assertEqual(deleted["roxy_browser_status"], "deleted")
+                self.assertEqual(deleted["roxy_profile_id"], "")
                 self.assertEqual(store.summary()["roxy_open"], 0)
                 removed_account = store.delete_source_account(account["id"])
                 self.assertTrue(removed_account["deleted"])

@@ -21,7 +21,7 @@
     <section class="stats" id="stats"></section>
     <div class="eligibility-note"><strong>执行前检查</strong><span>新邮箱不能已绑定其他 OpenAI 账号；账号需可使用 Settings → Account 自助换绑。单账号最多 24 小时 2 次、生命周期 20 次。</span></div>
     <div class="logic-note"><strong>双重自动轮换</strong><span>每个账号先从“换绑代理”池随机选择一条，创建 Roxy 前检测真实出口；检测失败立即标记该代理并随机换下一条，不消耗替换邮箱。收不到新邮箱验证码、取码 API 超时或新邮箱已被占用时，才隔离该邮箱并为同一原账号换下一个邮箱。</span></div>
-    <div class="logic-note keep-open-note"><strong>成功窗口规则</strong><span>换绑失败会自动关闭并删除临时 Roxy 环境；换绑成功并获取新 AT 后，Roxy 窗口保持新邮箱登录态。可在完成账号后点击“重新获取 AT”（例如充值 Plus 后刷新）或“关闭窗口”。</span></div>
+    <div class="logic-note keep-open-note"><strong>成功窗口规则</strong><span>换绑失败会自动关闭并删除临时 Roxy 环境；换绑成功并获取新 AT 后，Roxy 窗口保持新邮箱登录态。需要时可先“重新获取 AT”，最终点击“关闭并删除”会同时关闭窗口并永久删除对应 Roxy Profile，避免环境堆积。</span></div>
 
     <section class="view" id="view-workspace">
       <div class="grid three">
@@ -51,12 +51,12 @@
       </article>
 
       <article class="card result-card">
-        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>按原邮箱导入类型轮转：密码账号导出“原邮箱----换绑后邮箱----密码----2FA----AT”；URL 账号导出“原邮箱----换绑后邮箱----替换邮箱URL----AT”。复制和 TXT 使用同一格式。</p></div><div class="actions"><button class="btn ghost" id="copyExport">复制完成结果</button><button class="btn primary" id="downloadExport">下载 TXT</button></div></div>
+        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>按原邮箱导入类型轮转：密码账号复制“原邮箱----换绑后邮箱----密码----2FA----AT”；URL 账号复制“原邮箱----换绑后邮箱----替换邮箱URL----AT”。</p></div><div class="actions"><button class="btn ghost" id="copyExport">复制完成结果</button></div></div>
         <div id="recentTasks" class="task-list"></div>
       </article>
 
       <article class="card success-account-card">
-        <div class="card-head"><div><h2>换绑完成账号</h2><p>成功窗口默认保持登录；重新获取 AT 后会原子保存到账号结果，界面自动刷新并显示“AT 已更新”或“AT 未变化”，保存成功后可直接复制或下载 TXT。</p></div></div>
+        <div class="card-head"><div><h2>换绑完成账号</h2><p>成功窗口默认保持登录；重新获取 AT 后会原子保存，界面自动刷新并显示“AT 已更新”或“AT 未变化”。“复制AT”只复制该账号的单独 AT；“关闭并删除”会永久删除对应 Roxy Profile。</p></div></div>
         <div class="table-wrap"><table><thead><tr><th>原邮箱 → 换绑后邮箱</th><th>AT 状态</th><th>Roxy 窗口</th><th>Profile</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="successAccountsBody"></tbody></table></div>
       </article>
     </section>

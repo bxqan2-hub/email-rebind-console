@@ -146,6 +146,18 @@ def create_app(*, recover: bool = True) -> Flask:
             return jsonify({"ok": False, **result}), 409
         return jsonify({"ok": True, **result}), 202
 
+
+    @app.get("/api/accounts/<int:account_id>/access-token")
+    def api_account_access_token(account_id: int):
+        access_token = store.get_success_access_token(account_id)
+        if not access_token:
+            return jsonify({"ok": False, "error": "该成功账号暂无可复制的 AT"}), 404
+        return Response(
+            access_token,
+            content_type="text/plain; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.post("/api/accounts/<int:account_id>/close-roxy")
     def api_close_roxy(account_id: int):
         account = store.get_success_account_context(account_id)
@@ -153,18 +165,18 @@ def create_app(*, recover: bool = True) -> Flask:
             return jsonify({"ok": False, "error": "成功账号不存在"}), 404
         if account.get("at_refresh_status") == "running":
             return jsonify({"ok": False, "error": "该账号正在重新获取 AT，请完成后再关闭窗口"}), 409
-        if account.get("roxy_browser_status") == "closed":
-            return jsonify({"ok": True, "already_closed": True, "item": account})
+        if account.get("roxy_browser_status") == "deleted":
+            return jsonify({"ok": True, "already_deleted": True, "item": account})
         profile_id = str(account.get("roxy_profile_id") or "").strip()
         if not profile_id:
-            return jsonify({"ok": False, "error": "账号没有保留的 Roxy profile_id"}), 409
+            return jsonify({"ok": False, "error": "账号没有可删除的 Roxy profile_id"}), 409
         try:
-            roxy_flow_result = roxy_flow.close_retained_profile(profile_id)
+            roxy_flow_result = roxy_flow.delete_retained_profile(profile_id)
         except Exception as exc:
-            logging.getLogger(__name__).exception("关闭成功账号 Roxy 窗口失败 account=%s", account_id)
+            logging.getLogger(__name__).exception("关闭并删除成功账号 Roxy Profile 失败 account=%s", account_id)
             return jsonify({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}"}), 500
-        item = store.mark_roxy_profile_closed(account_id)
-        return jsonify({"ok": True, "closed": bool(roxy_flow_result), "item": item})
+        item = store.mark_roxy_profile_deleted(account_id)
+        return jsonify({"ok": True, "closed": True, "deleted": bool(roxy_flow_result), "item": item})
 
     @app.post("/api/pairs/preview")
     def api_preview():

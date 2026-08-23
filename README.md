@@ -105,15 +105,15 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 
 - 换绑失败：关闭并删除本轮临时 Roxy 环境，释放未判坏的替换邮箱。
 - 换绑成功：获取新 AT 后不退出、不关闭窗口，保持新邮箱登录态和 Roxy 环境。
-- “重新获取 AT”：复用同一成功窗口读取最新 `/api/auth/session`；窗口曾手动关闭时，
-  会重开同一 Roxy Profile，登录资料仍然保留。适合充值 Plus 后刷新 AT。
-- “关闭窗口”：只关闭 Roxy 窗口并保留 Profile；以后仍可点击“重新获取 AT”重开。
-- “清理账号”：成功账号关闭 Roxy 窗口后可删除；保存的 AT 和该账号导出结果随账号一起清理。
+- “重新获取 AT”：在窗口仍保持登录时复用同一成功窗口读取最新 `/api/auth/session`，适合充值 Plus 后刷新 AT。
+- “关闭并删除”：先关闭 Roxy 窗口，再删除对应 Profile；删除后不能重新获取 AT，避免环境持续堆积。
+- “复制AT”：只复制该完成账号保存的单独 AT，不拼接邮箱、密码或取码 URL。
+- “清理账号”：成功账号的 Roxy Profile 删除后可清理；保存的 AT 和该账号导出结果随账号一起清理。
 - “清理记录”：成功、失败和待核验任务都支持单条或批量清理，活动任务不会被删除。
 
 完成账号表会显示 Profile ID、窗口状态、AT 更新时间和失败原因。重新获取成功后，
 页面会自动刷新并明确显示“AT 已更新”或“AT 未变化”；获取到的 AT 会原子保存并回读校验，
-复制结果和下载 TXT 都立即使用已保存的 AT。
+“复制结果”和“复制AT”都会立即使用已保存的 AT，页面不再提供 TXT 下载按钮。
 
 邮箱 API 默认校验 HTTPS 证书；只有内部自签名接口需要在启动前设置
 `EMAIL_REBIND_MAIL_VERIFY_TLS=0`。也可用 `EMAIL_REBIND_PORT`、

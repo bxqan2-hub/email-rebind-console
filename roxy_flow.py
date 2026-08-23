@@ -150,7 +150,7 @@ def _retained_or_reopen(profile_id: str, expected_email: str) -> dict:
 
 
 def refresh_retained_access_token(profile_id: str, expected_email: str) -> dict:
-    """复用成功窗口的登录态重新读取 session/AT；窗口关闭后会重开同一环境。"""
+    """复用成功窗口的登录态重新读取 session/AT。"""
     record = _retained_or_reopen(profile_id, expected_email)
     with record["lock"]:
         _client_type, _build, _center, fetch_session, _safe_get, _submit_email, _probe_driver_exit = _load_main_roxy()
@@ -172,29 +172,30 @@ def refresh_retained_access_token(profile_id: str, expected_email: str) -> dict:
         }
 
 
-def close_retained_profile(profile_id: str) -> bool:
-    """关闭成功账号窗口但保留 Roxy 环境；之后仍可重开同一环境重新获取 AT。"""
+def delete_retained_profile(profile_id: str) -> bool:
+    """关闭成功账号窗口并删除 Roxy Profile，避免环境持续堆积。"""
     key = str(profile_id or "").strip()
     if not key:
         raise RuntimeError("成功账号没有可关闭的 Roxy profile_id")
     with _RETAINED_LOCK:
         record = _RETAINED.get(key)
-    if record:
-        with record["lock"]:
-            closed = bool(record["client"].close_profile(key))
+    client = record["client"] if record else _load_main_roxy()[0]()
+    lock = record["lock"] if record else threading.RLock()
+    with lock:
+        closed = bool(client.close_profile(key))
+        if record:
             try:
                 record["driver"].quit()
             except Exception:
                 pass
-    else:
-        RoxyBrowserClient, *_rest = _load_main_roxy()
-        closed = bool(RoxyBrowserClient().close_profile(key))
-    if not closed:
-        raise RuntimeError(f"Roxy 窗口关闭失败：profile={key}")
-    if record:
-        with _RETAINED_LOCK:
-            if _RETAINED.get(key) is record:
-                _RETAINED.pop(key, None)
+        deleted = bool(client.delete_profile(key))
+    with _RETAINED_LOCK:
+        if record and _RETAINED.get(key) is record:
+            _RETAINED.pop(key, None)
+    if not deleted:
+        raise RuntimeError(
+            f"Roxy Profile 删除失败：profile={key}, closed={closed}；请重试关闭并删除"
+        )
     return True
 
 

@@ -445,7 +445,7 @@ def delete_source_account(account_id: int) -> dict:
                 "reason": "in_use",
                 "task_id": int((active_task or {}).get("id") or row.get("active_task_id") or 0),
             }
-        if row.get("status") == "success" and row.get("roxy_browser_status") != "closed":
+        if row.get("status") == "success" and row.get("roxy_browser_status") != "deleted":
             return {"deleted": False, "reason": "window_open"}
         if row.get("status") == "review":
             return {"deleted": False, "reason": "result_locked"}
@@ -911,11 +911,27 @@ def get_success_account_context(account_id: int) -> dict | None:
         return dict(account)
 
 
+def get_success_access_token(account_id: int) -> str | None:
+    with _LOCK:
+        account = next((
+            row for row in _read(_ACCOUNTS)
+            if int(row.get("id") or 0) == int(account_id)
+            and row.get("status") == "success"
+        ), None)
+        access_token = str((account or {}).get("access_token") or "").strip()
+        return access_token or None
+
+
 def begin_access_token_refresh(account_id: int) -> dict | None:
     with _LOCK:
         rows = _read(_ACCOUNTS)
         row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
-        if not row or row.get("status") != "success" or not row.get("roxy_profile_id"):
+        if (
+            not row
+            or row.get("status") != "success"
+            or row.get("roxy_browser_status") != "open"
+            or not row.get("roxy_profile_id")
+        ):
             return None
         if row.get("at_refresh_status") == "running":
             return None
@@ -975,14 +991,20 @@ def fail_access_token_refresh(account_id: int, error: str, *, browser_open: bool
         return _public_account(row)
 
 
-def mark_roxy_profile_closed(account_id: int) -> dict | None:
+def mark_roxy_profile_deleted(account_id: int) -> dict | None:
     with _LOCK:
         rows = _read(_ACCOUNTS)
         row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
         if not row or row.get("status") != "success":
             return None
         now = _now()
-        row.update({"roxy_browser_status": "closed", "roxy_closed_at": now, "updated_at": now})
+        row.update({
+            "roxy_browser_status": "deleted",
+            "roxy_closed_at": now,
+            "roxy_deleted_at": now,
+            "roxy_profile_id": "",
+            "updated_at": now,
+        })
         _write(_ACCOUNTS, rows)
         return _public_account(row)
 
