@@ -80,6 +80,27 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 
 换绑遵循 ChatGPT 网页流程：登录 → Settings → Account → 点击当前邮箱 → 新邮箱验证 → 退出 → 用新邮箱重新登录并读取 `/api/auth/session` 的新 AT。
 
+## HAR 验证的换绑契约
+
+2026-08-23 的完整成功抓包验证了下面的服务端时序：登录邮箱验证码
+`POST /api/accounts/email-otp/validate` →
+`GET /backend-api/accounts/change_email/eligibility` →
+`POST /backend-api/accounts/change_email/begin` →
+`POST /backend-api/accounts/change_email/verify` → `GET /auth/logout`。
+其中 `verify` 的 `200`/`success=true` 是服务端已经换绑的提交点；`/auth/logout` 是网页成功回调触发的后续退出动作，不能再只等待 `/auth/login`。
+
+同版本前端资源确认 `begin` 使用 `{email}`，`verify` 使用 `{email, code}`；
+`social_password` 类型的两个请求还带 `remove_social_subs=true`。DOM 兜底使用版本化稳定标识：
+
+```text
+[data-testid="account-info-email"]
+[data-testid="modal-edit-email"] input[name="email"]
+[data-testid="modal-add-email-otp"] input[name="verification_code"]
+```
+
+实现会优先在当前 Roxy 登录页面内执行同源请求；接口缺失或需要页面重新认证时才退回 DOM 流程。
+抓包原文件、Cookie、验证码、邮箱、AT 和请求头值均不写入仓库或日志。
+
 ## 成功窗口与 AT 刷新
 
 - 换绑失败：关闭并删除本轮临时 Roxy 环境，释放未判坏的替换邮箱。

@@ -244,18 +244,19 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(restored["status"], "available")
                 self.assertNotIn("failure_reason", restored)
 
-    def test_restart_after_otp_submission_freezes_uncertain_identity(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"):
-                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
-                store.import_replacement_emails("maybe@example.com----https://mail.example/maybe")
-                task = store.reserve_batch()[0]
-                store.update_task(task["id"], status="running", stage="submit_new_email_otp", message="验证码已提交")
-                self.assertEqual(store.recover_interrupted_tasks(), 1)
-                self.assertEqual(store.list_accounts()[0]["status"], "review")
-                self.assertEqual(store.list_replacements()[0]["status"], "review")
-                self.assertEqual(store.list_tasks()[0]["stage"], "manual_review")
+    def test_restart_after_committed_boundary_freezes_uncertain_identity(self):
+        for stage in ("submit_new_email_otp", "changed", "relogin_new", "verified", "kept_open"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"):
+                    store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                    store.import_replacement_emails("maybe@example.com----https://mail.example/maybe")
+                    task = store.reserve_batch()[0]
+                    store.update_task(task["id"], status="running", stage=stage, message="换绑已进入提交边界")
+                    self.assertEqual(store.recover_interrupted_tasks(), 1)
+                    self.assertEqual(store.list_accounts()[0]["status"], "review")
+                    self.assertEqual(store.list_replacements()[0]["status"], "review")
+                    self.assertEqual(store.list_tasks()[0]["stage"], "manual_review")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@
 """通过 Roxy 指纹浏览器执行 ChatGPT 设置里的邮箱换绑。"""
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import sys
 import threading
@@ -36,6 +38,10 @@ class RebindOutcomeUnknown(RuntimeError):
 
 class ProxyFailure(RuntimeError):
     """换绑代理在创建 Roxy 环境前检测失败；工作线程应隔离并换下一条。"""
+
+
+class _HarApiUnavailable(RuntimeError):
+    """抓包确认的换绑 API 在当前页面版本不可用，可退回 DOM 流程。"""
 
 
 def _load_main_roxy():
@@ -229,6 +235,30 @@ def _set_value(driver, element, value: str) -> None:
     """, element, value)
 
 
+def _set_otp_value(driver, element, value: str) -> None:
+    """兼容单框 OTP 和实验中的 4–8 个逐位输入框。"""
+    code = str(value or "").strip()
+    filled = driver.execute_script(r"""
+    const anchor = arguments[0], value = String(arguments[1] || '');
+    const root = anchor?.closest('[data-testid="modal-add-email-otp"], [role="dialog"], form') || document;
+    const visible = el => !!el && !el.disabled && (el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+      && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
+    const boxes = [...root.querySelectorAll('input')].filter(el => visible(el) && Number(el.maxLength) === 1);
+    if (boxes.length < 4 || boxes.length > 8 || value.length > boxes.length) return 0;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    boxes.forEach((el, index) => {
+      const digit = value[index] || '';
+      if (setter) setter.call(el, digit); else el.value = digit;
+      el.dispatchEvent(new Event('input', {bubbles:true}));
+      el.dispatchEvent(new Event('change', {bubbles:true}));
+    });
+    (boxes[Math.min(value.length, boxes.length) - 1] || boxes[0]).focus();
+    return boxes.length;
+    """, element, code)
+    if not filled:
+        _set_value(driver, element, code)
+
+
 def _submit_near(driver, element) -> None:
     result = driver.execute_script(r"""
     const el = arguments[0];
@@ -247,6 +277,263 @@ def _submit_near(driver, element) -> None:
 def _session_email(session: dict) -> str:
     user = session.get("user") if isinstance(session, dict) else {}
     return str((user or {}).get("email") or session.get("email") or "").strip()
+
+
+def _session_account_id(session: dict) -> str:
+    """从当前 session 的 accessToken 中只读提取 ChatGPT workspace account id。"""
+    if not isinstance(session, dict):
+        return ""
+    direct = str(session.get("accountId") or session.get("account_id") or "").strip()
+    if direct:
+        return direct
+    token = str(session.get("accessToken") or "").strip()
+    try:
+        encoded = token.split(".")[1]
+        encoded += "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(encoded.encode("ascii")))
+    except Exception:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    auth = payload.get("https://api.openai.com/auth")
+    auth = auth if isinstance(auth, dict) else {}
+    return str(auth.get("chatgpt_account_id") or payload.get("account_id") or "").strip()
+
+
+def _browser_json_request(
+    driver,
+    method: str,
+    path: str,
+    *,
+    account_id: str = "",
+    body: dict | None = None,
+    timeout: float = 45.0,
+) -> dict:
+    """在已登录的 ChatGPT 页面上下文发送同源 JSON 请求，不导出 Cookie/token。"""
+    script = r"""
+    const method = String(arguments[0] || 'GET').toUpperCase();
+    const path = String(arguments[1] || '');
+    const accountId = String(arguments[2] || '');
+    const body = arguments[3];
+    const timeoutMs = Math.max(1000, Number(arguments[4]) || 45000);
+    const done = arguments[5];
+    const controller = new AbortController();
+    let finished = false;
+    const finish = value => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      done(value);
+    };
+    const timer = setTimeout(() => {
+      controller.abort();
+      finish({ok:false, status:0, error:'request_timeout'});
+    }, timeoutMs);
+    const headers = {'accept':'application/json'};
+    if (accountId) headers['chatgpt-account-id'] = accountId;
+    if (body !== null && body !== undefined) headers['content-type'] = 'application/json';
+    fetch(path, {
+      method,
+      credentials:'include',
+      cache:'no-store',
+      headers,
+      body: body === null || body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    }).then(async response => {
+      const text = await response.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (_) {}
+      finish({ok:true, status:response.status, data, textLength:text.length});
+    }).catch(error => finish({ok:false, status:0, error:String(error?.name || 'fetch_error')}));
+    """
+    try:
+        result = driver.execute_async_script(
+            script,
+            str(method or "GET"),
+            str(path or ""),
+            str(account_id or ""),
+            body,
+            max(1.0, float(timeout or 45.0)) * 1000,
+        )
+    except Exception as exc:
+        return {"ok": False, "status": 0, "error": type(exc).__name__}
+    return dict(result or {})
+
+
+def _eligibility_allowed(data) -> bool:
+    if not isinstance(data, dict):
+        return False
+    for key in ("eligible", "is_eligible", "isEligible", "can_change_email", "canChangeEmail"):
+        if key in data:
+            return data.get(key) is True
+    return False
+
+
+def _api_error_code(data) -> str:
+    if not isinstance(data, dict):
+        return ""
+    error = data.get("error") if isinstance(data.get("error"), dict) else {}
+    detail = data.get("detail") if isinstance(data.get("detail"), dict) else {}
+    detail_error = detail.get("error") if isinstance(detail.get("error"), dict) else {}
+    for candidate in (
+        data.get("code"), data.get("error_code"), error.get("code"),
+        detail.get("code"), detail.get("error_code"), detail_error.get("code"),
+    ):
+        value = str(candidate or "").strip().lower()
+        if value and len(value) <= 80:
+            return value
+    return ""
+
+
+def _change_email_via_har_api(
+    driver,
+    *,
+    session: dict,
+    new_email: str,
+    api_url: str,
+    progress: Callable[[str, str], None],
+) -> None:
+    """按已验证 HAR 时序执行 eligibility → begin → verify → logout。"""
+    account_id = _session_account_id(session)
+    if not account_id:
+        raise _HarApiUnavailable("登录 session 中没有 chatgpt_account_id")
+
+    progress("check_email_eligibility", "检查当前账号的邮箱换绑资格")
+    eligibility = _browser_json_request(
+        driver, "GET", "/backend-api/accounts/change_email/eligibility",
+    )
+    if not eligibility.get("ok") or int(eligibility.get("status") or 0) in {404, 405}:
+        raise _HarApiUnavailable("换绑资格接口不可用")
+    status = int(eligibility.get("status") or 0)
+    if status in {401, 403}:
+        raise _HarApiUnavailable("换绑资格接口要求页面登录态")
+    if status != 200:
+        raise RuntimeError(f"检查换绑资格失败：HTTP {status}")
+    eligibility_data = eligibility.get("data") if isinstance(eligibility.get("data"), dict) else {}
+    if not _eligibility_allowed(eligibility_data):
+        raise RuntimeError("当前账号不符合自助换绑条件")
+    eligibility_type = str(eligibility_data.get("eligibility_type") or "").strip().lower()
+    if eligibility_type == "social":
+        raise RuntimeError("社交登录账号需要先在 ChatGPT Security 中设置密码，再使用失败重试")
+    if eligibility_type not in {"", "password", "social_password"}:
+        raise _HarApiUnavailable(f"未知换绑资格类型：{eligibility_type}")
+    remove_social_subs = eligibility_type == "social_password"
+
+    previous_otp = None
+    try:
+        previous_otp = mail_api.read_current_otp(api_url, new_email, timeout=4)
+    except Exception:
+        pass
+
+    progress("submit_new_email", "提交替换邮箱并请求新邮箱验证码")
+    begin_body = {"email": new_email}
+    if remove_social_subs:
+        begin_body["remove_social_subs"] = True
+    begin = _browser_json_request(
+        driver, "POST", "/backend-api/accounts/change_email/begin",
+        account_id=account_id, body=begin_body,
+    )
+    if not begin.get("ok"):
+        raise RuntimeError("提交替换邮箱后未取得服务端响应，可使用失败重试")
+    begin_status = int(begin.get("status") or 0)
+    begin_code = _api_error_code(begin.get("data"))
+    if begin_status in {404, 405}:
+        raise _HarApiUnavailable("换绑开始接口不可用")
+    if begin_status == 401 or begin_code == "reauth_required":
+        raise _HarApiUnavailable("换绑接口要求页面重新认证")
+    if begin_status == 429 or begin_code in {"email_change_rate_limited", "email_change_limit_reached"}:
+        raise RuntimeError("当前账号已达到邮箱换绑频率或次数限制")
+    if begin_status in {400, 409, 422}:
+        detail = f"，错误码 {begin_code}" if begin_code else ""
+        raise RuntimeError(f"换绑开始请求被拒绝：HTTP {begin_status}{detail}")
+    if begin_status == 403:
+        raise ReplacementEmailFailure("email_in_use", "替换邮箱已被其他账号关联")
+    if begin_status != 200 or not (
+        isinstance(begin.get("data"), dict) and begin["data"].get("success") is True
+    ):
+        raise RuntimeError(f"提交替换邮箱失败：HTTP {begin_status}")
+
+    progress("wait_new_email_otp", "通过替换邮箱 API 等待新验证码")
+    try:
+        code = mail_api.wait_for_new_otp(
+            api_url, new_email, previous=previous_otp,
+            max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
+        )
+    except Exception as exc:
+        raise ReplacementEmailFailure(
+            "otp_unavailable",
+            f"替换邮箱未取得新验证码：{type(exc).__name__}: {str(exc)[:240]}",
+        ) from exc
+
+    progress("submit_new_email_otp", "提交替换邮箱验证码")
+    verify_body = {"email": new_email, "code": code}
+    if remove_social_subs:
+        verify_body["remove_social_subs"] = True
+    verified = _browser_json_request(
+        driver, "POST", "/backend-api/accounts/change_email/verify",
+        account_id=account_id,
+        body=verify_body,
+    )
+    if not verified.get("ok"):
+        raise RebindOutcomeUnknown(new_email, "换绑验证码请求已发送，但未取得服务端响应")
+    verify_status = int(verified.get("status") or 0)
+    if verify_status == 403:
+        raise ReplacementEmailFailure("email_in_use", "替换邮箱已被其他账号关联")
+    if verify_status == 429:
+        raise RuntimeError("替换邮箱验证码校验已达到频率限制")
+    if verify_status in {401, 422}:
+        raise RuntimeError(f"替换邮箱验证码被拒绝：HTTP {verify_status}，可使用失败重试")
+    if verify_status in {400, 409}:
+        raise RuntimeError(f"换绑验证请求被拒绝：HTTP {verify_status}，可使用失败重试")
+    if verify_status != 200:
+        raise RebindOutcomeUnknown(new_email, f"换绑验证码已提交，但服务端返回 HTTP {verify_status}")
+    if not (isinstance(verified.get("data"), dict) and verified["data"].get("success") is True):
+        raise RebindOutcomeUnknown(new_email, "换绑验证码接口返回 200，但没有 success=true 确认")
+
+    # HAR 中 verify 的 200/{success:true} 是服务端提交点；/auth/logout 是网页
+    # onSuccess 回调产生的后续动作。直接同源 fetch 不会自动执行该回调，因此
+    # 这里以 200 为已换绑证据，并显式复刻退出动作，不能把 URL 未跳转误判为未知。
+    progress("changed", "服务端已确认邮箱更新；退出旧登录态")
+    try:
+        driver.execute_script("window.location.assign('/auth/logout')")
+    except Exception:
+        pass
+
+
+def _change_email_har_guided(
+    driver,
+    *,
+    session: dict,
+    old_email: str,
+    new_email: str,
+    password: str,
+    totp_secret: str,
+    source_api_url: str,
+    api_url: str,
+    safe_get,
+    progress: Callable[[str, str], None],
+) -> None:
+    """优先使用抓包确认的同源 API；仅在接口缺失且尚未 begin 时退回页面流程。"""
+    try:
+        _change_email_via_har_api(
+            driver, session=session, new_email=new_email,
+            api_url=api_url, progress=progress,
+        )
+        return
+    except _HarApiUnavailable as exc:
+        logger.warning("HAR 换绑接口不可用，切换 DOM 流程：%s", exc)
+        progress("open_settings", "换绑接口不可用，切换 ChatGPT 设置页面流程")
+    _open_account_settings(driver, old_email, safe_get, progress)
+    _change_email(
+        driver,
+        old_email=old_email,
+        new_email=new_email,
+        password=password,
+        totp_secret=totp_secret,
+        source_api_url=source_api_url,
+        api_url=api_url,
+        progress=progress,
+    )
 
 
 def _complete_login(
@@ -286,6 +573,7 @@ def _complete_login(
             continue
         text = _body_text(driver).lower()
         code_input = _visible_input(driver, [
+            'input[name="verification_code"]',
             'input[name*="totp" i]', 'input[id*="totp" i]', 'input[autocomplete="one-time-code"]',
             'input[inputmode="numeric"]', 'input[name="code"]',
         ])
@@ -297,7 +585,7 @@ def _complete_login(
                 raise RuntimeError(f"{email_label}登录要求 2FA，但导入的原邮箱记录没有 MFA Secret")
             progress("login_totp", "提交原账号 2FA 动态码")
             code = pyotp.TOTP(totp_secret.replace(" ", "")).now()
-            _set_value(driver, code_input, code)
+            _set_otp_value(driver, code_input, code)
             _submit_near(driver, code_input)
             totp_sent_at = time.monotonic()
             time.sleep(2)
@@ -313,12 +601,12 @@ def _complete_login(
                 email_api_url, email, previous=previous_email_otp,
                 max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
                 stop_check=lambda: _visible_input(driver, [
-                    'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
+                    'input[name="verification_code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
                     'input[name="code"]',
                 ]) is None,
             )
             progress("submit_login_email_otp", f"提交{email_label}登录验证码")
-            _set_value(driver, code_input, code)
+            _set_otp_value(driver, code_input, code)
             _submit_near(driver, code_input)
             email_otp_sent = True
             time.sleep(2)
@@ -340,19 +628,30 @@ def _open_account_settings(driver, old_email: str, safe_get, progress: Callable[
         const oldEmail = String(arguments[0] || '').toLowerCase();
         const visible = el => !!el && !el.disabled && (el.offsetWidth || el.offsetHeight || el.getClientRects().length)
           && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
+        const editModal = document.querySelector('[data-testid="modal-edit-email"]');
+        const reauthInput = document.querySelector('input[type="password"], input[name="password"], input[autocomplete="one-time-code"]');
+        if (visible(editModal) || visible(reauthInput)) return 'ready';
+        const emailRow = document.querySelector('[data-testid="account-info-email"]');
+        if (visible(emailRow)) {
+          const target = emailRow.matches('button, a, [role="button"]') ? emailRow
+            : emailRow.querySelector('button, a, [role="button"]')
+              || emailRow.closest('button, a, [role="button"]') || emailRow;
+          target.scrollIntoView({block:'center'}); target.click(); return 'clicked';
+        }
         const all = [...document.querySelectorAll('button, a, [role="button"], [tabindex="0"]')].filter(visible);
         const norm = el => `${el.innerText || ''} ${el.getAttribute('aria-label') || ''} ${el.title || ''}`.trim().toLowerCase();
         let target = all.find(el => oldEmail && norm(el).includes(oldEmail));
         if (!target) target = all.find(el => /change email|update email|edit email|更改邮箱|换绑邮箱|修改邮箱|邮箱地址|email address/.test(norm(el)));
-        if (target) { target.scrollIntoView({block:'center'}); target.click(); return 'email'; }
+        if (target) { target.scrollIntoView({block:'center'}); target.click(); return 'clicked'; }
+        const accountHref = [...document.querySelectorAll('a[href*="#settings/Account" i]')].find(visible);
+        if (accountHref) { accountHref.click(); return 'account'; }
         const account = all.find(el => /^(account|账户|账号|アカウント|계정)$/.test(norm(el)));
         if (account) { account.click(); return 'account'; }
         const settings = all.find(el => /^(settings|设置|設定|설정)$/.test(norm(el)));
         if (settings) { settings.click(); return 'settings'; }
         return '';
         """, old_email)
-        if clicked == "email":
-            time.sleep(2)
+        if clicked == "ready":
             return
         time.sleep(1)
     raise RuntimeError("设置 → Account 中未找到可点击的当前邮箱；该账号可能不满足自助换绑条件")
@@ -391,7 +690,8 @@ def _change_email(
         lowered = text.lower()
         current = str(getattr(driver, "current_url", "") or "")
         if otp_sent and (
-            "auth/login" in current
+            "/auth/logout" in current
+            or "auth/login" in current
             or any(marker in lowered for marker in ("email updated", "email changed", "邮箱已更新", "邮箱地址已更改"))
         ):
             progress("changed", "服务端已完成邮箱更新并退出旧登录态")
@@ -409,6 +709,8 @@ def _change_email(
             continue
 
         numeric_input = _visible_input(driver, [
+            '[data-testid="modal-add-email-otp"] input[name="verification_code"]',
+            'input[name="verification_code"]',
             'input[name*="totp" i]', 'input[id*="totp" i]', 'input[autocomplete="one-time-code"]',
             'input[inputmode="numeric"]', 'input[name="code"]',
         ])
@@ -419,7 +721,7 @@ def _change_email(
             if not str(totp_secret or "").strip():
                 raise RuntimeError("换绑前重新验证要求 2FA，但原邮箱记录没有 MFA Secret")
             progress("reauth_totp", "换绑前重新验证 2FA")
-            _set_value(driver, numeric_input, pyotp.TOTP(totp_secret.replace(" ", "")).now())
+            _set_otp_value(driver, numeric_input, pyotp.TOTP(totp_secret.replace(" ", "")).now())
             _submit_near(driver, numeric_input)
             totp_sent_at = time.monotonic()
             time.sleep(2)
@@ -439,22 +741,26 @@ def _change_email(
                 source_api_url, old_email, previous=previous_source_otp,
                 max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
                 stop_check=lambda: _visible_input(driver, [
-                    'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
+                    'input[name="verification_code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
                     'input[name="code"]',
                 ]) is None,
             )
             progress("submit_reauth_email_otp", "提交原邮箱重新验证验证码")
-            _set_value(driver, numeric_input, code)
+            _set_otp_value(driver, numeric_input, code)
             _submit_near(driver, numeric_input)
             source_otp_sent = True
             time.sleep(2)
             continue
 
         email_input = _visible_input(driver, [
-            'input[type="email"]', 'input[name*="newEmail" i]', 'input[id*="newEmail" i]',
+            '[data-testid="modal-edit-email"] input[name="email"]',
+            'input[name="email"][type="email"]', 'input[type="email"]',
+            'input[name*="newEmail" i]', 'input[id*="newEmail" i]',
             'input[autocomplete="email"]',
         ])
-        change_context = any(marker in lowered for marker in (
+        change_context = bool(driver.execute_script(
+            "return !!document.querySelector('[data-testid=\"modal-edit-email\"]')"
+        )) or any(marker in lowered for marker in (
             "new email", "change email", "update email", "新的邮箱", "新邮箱", "更改邮箱", "修改邮箱",
         ))
         if email_input and not new_email_sent and change_context:
@@ -465,16 +771,21 @@ def _change_email(
             time.sleep(3)
             continue
 
-        email_otp_page = numeric_input and new_email_sent and not totp_page and any(marker in lowered for marker in (
-            "verification", "one-time", "sent", "code", "验证码", "認証コード", "인증 코드",
+        email_otp_modal = bool(driver.execute_script(
+            "return !!document.querySelector('[data-testid=\"modal-add-email-otp\"]')"
         ))
+        email_otp_page = numeric_input and new_email_sent and not totp_page and (
+            email_otp_modal or any(marker in lowered for marker in (
+                "verification", "one-time", "sent", "code", "验证码", "認証コード", "인증 코드",
+            ))
+        )
         if email_otp_page and not otp_sent:
             progress("wait_new_email_otp", "通过替换邮箱 API 等待新验证码")
             try:
                 code = mail_api.wait_for_new_otp(
                     api_url, new_email, previous=previous_otp,
                     max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
-                    stop_check=lambda: _visible_input(driver, ['input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[name="code"]']) is None,
+                    stop_check=lambda: _visible_input(driver, ['input[name="verification_code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[name="code"]']) is None,
                 )
             except Exception as exc:
                 raise ReplacementEmailFailure(
@@ -482,7 +793,7 @@ def _change_email(
                     f"替换邮箱 {new_email} 未取得新验证码：{type(exc).__name__}: {str(exc)[:300]}",
                 ) from exc
             progress("submit_new_email_otp", "提交替换邮箱验证码")
-            _set_value(driver, numeric_input, code)
+            _set_otp_value(driver, numeric_input, code)
             _submit_near(driver, numeric_input)
             otp_sent = True
             time.sleep(3)
@@ -581,15 +892,16 @@ def perform_email_rebind(
         if observed_old and observed_old.lower() != old_email.lower():
             raise RuntimeError(f"Roxy 登录态邮箱不匹配：期望 {old_email}，实际 {observed_old}")
 
-        _open_account_settings(driver, old_email, safe_get, progress)
-        _change_email(
+        _change_email_har_guided(
             driver,
+            session=old_session,
             old_email=old_email,
             new_email=new_email,
             password=password,
             totp_secret=totp_secret,
             source_api_url=source_api_url,
             api_url=api_url,
+            safe_get=safe_get,
             progress=progress,
         )
 

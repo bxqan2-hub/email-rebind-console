@@ -76,8 +76,7 @@ class RoxyRetentionTests(unittest.TestCase):
                     {"user": {"email": "old@example.com"}},
                     {"user": {"email": "new@example.com"}, "accessToken": "at-new"},
                 ]), \
-                patch.object(roxy_flow, "_open_account_settings"), \
-                patch.object(roxy_flow, "_change_email"), \
+                patch.object(roxy_flow, "_change_email_har_guided"), \
                 patch.object(roxy_flow, "_clear_login_state"):
             result = roxy_flow.perform_email_rebind(
                 old_email="old@example.com", new_email="new@example.com",
@@ -101,7 +100,7 @@ class RoxyRetentionTests(unittest.TestCase):
         loaded, _driver, _client_box = self._loaded(events)
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
                 patch.object(roxy_flow, "_complete_login", return_value={"user": {"email": "old@example.com"}}), \
-                patch.object(roxy_flow, "_open_account_settings", side_effect=RuntimeError("settings failed")):
+                patch.object(roxy_flow, "_change_email_har_guided", side_effect=RuntimeError("settings failed")):
             with self.assertRaisesRegex(RuntimeError, "settings failed"):
                 roxy_flow.perform_email_rebind(
                     old_email="old@example.com", new_email="new@example.com",

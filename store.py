@@ -992,7 +992,7 @@ def finish_failure(task_id: int, error: str) -> None:
 
 def recover_interrupted_tasks() -> int:
     active = [row for row in _read(_TASKS) if row.get("status") in {"queued", "running"}]
-    uncertain_stages = {"submit_new_email_otp", "changed", "relogin_new", "verified"}
+    uncertain_stages = {"submit_new_email_otp", "changed", "relogin_new", "verified", "kept_open"}
     for row in active:
         task_id = int(row.get("id") or 0)
         if str(row.get("stage") or "") in uncertain_stages:

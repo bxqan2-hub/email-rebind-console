@@ -20,7 +20,7 @@ class CompleteLoginEmailApiTests(unittest.TestCase):
 
         with patch.object(roxy_flow, "_visible_input", side_effect=visible), \
                 patch.object(roxy_flow, "_body_text", return_value="Verification code sent"), \
-                patch.object(roxy_flow, "_set_value") as set_value, \
+                patch.object(roxy_flow, "_set_otp_value") as set_otp_value, \
                 patch.object(roxy_flow, "_submit_near", side_effect=submit), \
                 patch.object(roxy_flow.mail_api, "wait_for_new_otp", return_value="123456") as wait_otp, \
                 patch.object(roxy_flow.time, "sleep"):
@@ -35,7 +35,7 @@ class CompleteLoginEmailApiTests(unittest.TestCase):
         wait_otp.assert_called_once()
         self.assertEqual(wait_otp.call_args.args[:2], ("https://mail.example/old", "old@example.com"))
         self.assertEqual(wait_otp.call_args.kwargs["previous"], "654321")
-        set_value.assert_called_once_with(driver, code_input, "123456")
+        set_otp_value.assert_called_once_with(driver, code_input, "123456")
         progress.assert_any_call("login_email_otp", "通过原邮箱 API 等待登录验证码")
 
 
