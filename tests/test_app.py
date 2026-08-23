@@ -99,7 +99,36 @@ class AppTests(unittest.TestCase):
                 started = client.post("/api/rebind/start", json={"account_ids": [], "workers": 2})
                 self.assertEqual(started.status_code, 200)
                 self.assertEqual(started.get_json()["submitted"], 1)
-                self.assertEqual(client.get("/api/export").status_code, 200)
+                task = store.list_tasks()[0]
+                store.finish_success(task["id"], {"email": "new@example.com", "access_token": "at-new"})
+                account_id = store.list_accounts()[0]["id"]
+                exported = client.get("/api/export")
+                self.assertEqual(exported.status_code, 200)
+                self.assertEqual(
+                    exported.get_data(as_text=True).strip(),
+                    "old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP",
+                )
+                self.assertIn("filename*=UTF-8''%E6%8D%A2%E7%BB%91%E5%AE%8C%E6%88%90-", exported.headers["Content-Disposition"])
+                one = client.get(f"/api/accounts/{account_id}/export")
+                self.assertEqual(one.status_code, 200)
+                self.assertEqual(one.get_data(as_text=True), exported.get_data(as_text=True))
+
+    def test_failed_task_log_cleanup_routes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"):
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                task = store.reserve_batch()[0]
+                store.finish_failure(task["id"], "test failure")
+                client = app.create_app(recover=False).test_client()
+
+                self.assertEqual(client.delete(f"/api/tasks/{task['id']}").status_code, 200)
+                self.assertEqual(client.delete(f"/api/tasks/{task['id']}").status_code, 404)
+                self.assertEqual(client.delete("/api/tasks/failed").get_json()["deleted"], 0)
 
     def test_failed_replacement_can_be_restored_by_route(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,6 +156,14 @@ class AppTests(unittest.TestCase):
         self.assertIn("proxy_available", script)
         self.assertIn("data-refresh-at", script)
         self.assertIn("data-close-roxy", script)
+        self.assertIn("data-copy-export", script)
+        self.assertIn("data-download-export", script)
+        self.assertIn("data-delete-failed-task", script)
+        self.assertIn("clearFailedTasks", script)
+        self.assertIn("downloadExport", script)
+        self.assertIn("document.execCommand('copy')", script)
+        self.assertIn("原邮箱----换绑后邮箱----密码----2FA", html)
+        self.assertIn("换绑后邮箱----取码URL----AT", html)
         self.assertIn("成功窗口规则", html)
         self.assertIn("不会再进入替换邮箱号池", html)
         self.assertIn("和原邮箱入口完全分开", html)

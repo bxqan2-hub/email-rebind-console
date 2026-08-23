@@ -456,6 +456,42 @@ def list_tasks(limit: int = 500) -> list[dict]:
         return [dict(row) for row in rows[:max(1, int(limit or 500))]]
 
 
+def _remove_task_links(rows: list[dict], removed_ids: set[int]) -> None:
+    """删除失败日志后，清掉剩余任务中指向已删除日志的追踪字段。"""
+    for row in rows:
+        for key in ("retry_of_task_id", "root_task_id", "manual_retry_task_id", "next_task_id"):
+            if int(row.get(key) or 0) in removed_ids:
+                row.pop(key, None)
+
+
+def delete_failed_task(task_id: int) -> dict:
+    """仅清理已失败的任务日志，不改动账号、邮箱池或成功结果。"""
+    with _LOCK:
+        rows = _read(_TASKS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(task_id)), None)
+        if not row:
+            return {"deleted": False, "reason": "not_found"}
+        if row.get("status") != "failed":
+            return {"deleted": False, "reason": "not_failed"}
+        rows.remove(row)
+        _remove_task_links(rows, {int(task_id)})
+        _write(_TASKS, rows)
+        return {"deleted": True, "item": dict(row)}
+
+
+def clear_failed_tasks() -> dict:
+    """批量清理全部失败任务日志，保留进行中和成功记录。"""
+    with _LOCK:
+        rows = _read(_TASKS)
+        removed = [row for row in rows if row.get("status") == "failed"]
+        removed_ids = {int(row.get("id") or 0) for row in removed}
+        kept = [row for row in rows if row.get("status") != "failed"]
+        if removed_ids:
+            _remove_task_links(kept, removed_ids)
+            _write(_TASKS, kept)
+        return {"deleted": len(removed), "task_ids": sorted(removed_ids)}
+
+
 def summary() -> dict:
     with _LOCK:
         accounts = _read(_ACCOUNTS)
@@ -1025,22 +1061,33 @@ def recover_interrupted_access_token_refreshes() -> int:
         return recovered
 
 
+def _export_success_line(row: dict) -> str | None:
+    new_email = str(row.get("new_email") or row.get("current_email") or "").strip()
+    access_token = str(row.get("access_token") or "").strip()
+    password = str(row.get("password") or "").strip()
+    totp_secret = str(row.get("totp_secret") or "").strip()
+    old_email = str(row.get("old_email") or "").strip()
+    source_api_url = str(row.get("api_url") or "").strip()
+    if not new_email:
+        return None
+    if password and totp_secret and old_email:
+        return "----".join([old_email, new_email, password, totp_secret])
+    if source_api_url and access_token:
+        return "----".join([new_email, source_api_url, access_token])
+    return None
+
+
+def export_success_line(account_id: int) -> str | None:
+    with _LOCK:
+        row = next((
+            item for item in _read(_ACCOUNTS)
+            if int(item.get("id") or 0) == int(account_id) and item.get("status") == "success"
+        ), None)
+        return _export_success_line(row) if row else None
+
+
 def export_success_lines() -> list[str]:
     with _LOCK:
         rows = [row for row in _read(_ACCOUNTS) if row.get("status") == "success"]
         rows.sort(key=lambda row: int(row.get("id") or 0))
-        exported: list[str] = []
-        for row in rows:
-            new_email = str(row.get("new_email") or row.get("current_email") or "").strip()
-            access_token = str(row.get("access_token") or "").strip()
-            password = str(row.get("password") or "").strip()
-            totp_secret = str(row.get("totp_secret") or "").strip()
-            old_email = str(row.get("old_email") or "").strip()
-            source_api_url = str(row.get("api_url") or "").strip()
-            if not new_email or not access_token:
-                continue
-            if password and totp_secret:
-                exported.append("----".join([new_email, password, totp_secret, access_token]))
-            elif old_email and source_api_url:
-                exported.append("----".join([new_email, old_email, source_api_url, access_token]))
-        return exported
+        return [line for row in rows if (line := _export_success_line(row))]

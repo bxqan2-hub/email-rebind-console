@@ -153,9 +153,13 @@ class StoreTests(unittest.TestCase):
                 })
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["new@example.com----Password!----JBSWY3DPEHPK3PXP----at-new"],
+                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP"],
                 )
                 account = store.list_accounts()[0]
+                self.assertEqual(
+                    store.export_success_line(account["id"]),
+                    "old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP",
+                )
                 self.assertEqual(account["roxy_browser_status"], "open")
                 self.assertEqual(account["roxy_profile_id"], "profile-1")
                 self.assertEqual(store.summary()["roxy_open"], 1)
@@ -166,7 +170,7 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(store.list_tasks()[0]["status"], "success")
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["new@example.com----Password!----JBSWY3DPEHPK3PXP----at-new"],
+                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP"],
                 )
 
                 started = store.begin_access_token_refresh(account["id"])
@@ -175,7 +179,7 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(refreshed["at_refresh_status"], "success")
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
+                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP"],
                 )
                 closed = store.mark_roxy_profile_closed(account["id"])
                 self.assertEqual(closed["roxy_browser_status"], "closed")
@@ -195,8 +199,30 @@ class StoreTests(unittest.TestCase):
 
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["new@example.com----old@example.com----https://mail.example/old----at-new"],
+                    ["new@example.com----https://mail.example/old----at-new"],
                 )
+
+    def test_failed_task_logs_can_be_cleared_without_removing_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"):
+                store.import_source_accounts("first@example.com----Password!----JBSWY3DPEHPK3PXP\nsecond@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new1@example.com----https://mail.example/1\nnew2@example.com----https://mail.example/2")
+                tasks = store.reserve_batch()
+                store.finish_failure(tasks[0]["id"], "failed")
+                store.finish_success(tasks[1]["id"], {"email": "new2@example.com", "access_token": "at-2"})
+
+                blocked = store.delete_failed_task(tasks[1]["id"])
+                self.assertEqual(blocked["reason"], "not_failed")
+                removed = store.delete_failed_task(tasks[0]["id"])
+                self.assertTrue(removed["deleted"])
+                self.assertEqual([row["id"] for row in store.list_tasks()], [tasks[1]["id"]])
+                self.assertEqual(store.summary()["tasks_failed"], 0)
+
+                self.assertEqual(store.clear_failed_tasks(), {"deleted": 0, "task_ids": []})
 
     def test_failure_releases_replacement(self):
         with tempfile.TemporaryDirectory() as tmp:

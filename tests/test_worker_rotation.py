@@ -139,7 +139,7 @@ class WorkerRotationTests(unittest.TestCase):
                 refresh.assert_called_once_with("profile-1", "new@example.com")
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
+                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP"],
                 )
                 self.assertEqual(store.list_accounts()[0]["roxy_browser_status"], "open")
 

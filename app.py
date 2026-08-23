@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from urllib.parse import quote
 
 from flask import Flask, Response, jsonify, render_template, request
 
@@ -209,16 +210,44 @@ def create_app(*, recover: bool = True) -> Flask:
     def api_tasks():
         return jsonify({"ok": True, "items": store.list_tasks(), "summary": store.summary()})
 
-    @app.get("/api/export")
-    def api_export():
-        lines = store.export_success_lines()
+    @app.delete("/api/tasks/failed")
+    def api_clear_failed_tasks():
+        result = store.clear_failed_tasks()
+        return jsonify({"ok": True, **result})
+
+    @app.delete("/api/tasks/<int:task_id>")
+    def api_delete_failed_task(task_id: int):
+        result = store.delete_failed_task(task_id)
+        if result.get("deleted"):
+            return jsonify({"ok": True, **result})
+        if result.get("reason") == "not_found":
+            return jsonify({"ok": False, "error": "任务日志不存在", **result}), 404
+        return jsonify({"ok": False, "error": "只能清理已失败的任务日志", **result}), 409
+
+    def export_response(lines: list[str], *, account_id: int | None = None) -> Response:
         body = "\n".join(lines) + ("\n" if lines else "")
-        filename = f"换绑完成-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        readable = f"换绑完成-账号{account_id}-{stamp}.txt" if account_id else f"换绑完成-{stamp}.txt"
+        fallback = f"rebind-account-{account_id}-{stamp}.txt" if account_id else f"rebind-results-{stamp}.txt"
         return Response(
             body,
-            mimetype="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+            content_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(readable)}",
+                "Cache-Control": "no-store",
+            },
         )
+
+    @app.get("/api/export")
+    def api_export():
+        return export_response(store.export_success_lines())
+
+    @app.get("/api/accounts/<int:account_id>/export")
+    def api_export_account(account_id: int):
+        line = store.export_success_line(account_id)
+        if line is None:
+            return jsonify({"ok": False, "error": "该成功账号暂无完整导出结果"}), 404
+        return export_response([line], account_id=account_id)
 
     return app
 
