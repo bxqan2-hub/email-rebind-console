@@ -9,7 +9,7 @@ import store
 
 
 class AppTests(unittest.TestCase):
-    def test_account_import_route_smartly_accepts_email_url(self):
+    def test_account_import_route_keeps_email_url_out_of_replacement_pool(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
@@ -21,10 +21,10 @@ class AppTests(unittest.TestCase):
 
                 self.assertEqual(response.status_code, 200)
                 body = response.get_json()
-                self.assertEqual(body["account_parsed"], 0)
-                self.assertEqual(body["replacement_parsed"], 1)
-                self.assertEqual(store.list_accounts(), [])
-                self.assertEqual(store.list_replacements()[0]["email"], "new@example.com")
+                self.assertEqual(body["parsed"], 1)
+                self.assertEqual(store.list_accounts()[0]["old_email"], "new@example.com")
+                self.assertTrue(store.list_accounts()[0]["has_api"])
+                self.assertEqual(store.list_replacements(), [])
 
     def test_replacement_and_proxy_delete_routes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -115,9 +115,10 @@ class AppTests(unittest.TestCase):
         self.assertIn("data-refresh-at", script)
         self.assertIn("data-close-roxy", script)
         self.assertIn("成功窗口规则", html)
-        self.assertIn("智能导入", html)
-        self.assertIn("邮箱+URL", html)
-        self.assertIn("account_parsed", script)
+        self.assertIn("不会再进入替换邮箱号池", html)
+        self.assertIn("和原邮箱入口完全分开", html)
+        self.assertNotIn("智能导入", html)
+        self.assertNotIn("account_parsed", script)
         self.assertIn("导入原邮箱账号", html)
         self.assertIn("data-delete-replacement", script)
         self.assertIn("data-delete-proxy", script)

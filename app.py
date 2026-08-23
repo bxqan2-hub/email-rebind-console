@@ -43,11 +43,11 @@ def create_app(*, recover: bool = True) -> Flask:
     @app.post("/api/accounts/import")
     def api_import_accounts():
         data = request.get_json(silent=True) or {}
-        result = store.import_smart_entries(str(data.get("text") or ""))
+        result = store.import_source_accounts(str(data.get("text") or ""))
         if not result["parsed"]:
             return jsonify({
                 "ok": False,
-                "error": "未识别到支持格式：邮箱----密码----MFA Secret，或 邮箱----API取码URL",
+                "error": "未识别到原邮箱格式：邮箱----API取码URL，或 邮箱----密码----MFA Secret",
                 **result,
             }), 400
         return jsonify({"ok": True, **result})

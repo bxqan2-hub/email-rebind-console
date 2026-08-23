@@ -249,10 +249,22 @@ def _session_email(session: dict) -> str:
     return str((user or {}).get("email") or session.get("email") or "").strip()
 
 
-def _complete_login(driver, email: str, password: str, totp_secret: str, fetch_session, progress: Callable[[str, str], None]) -> dict:
+def _complete_login(
+    driver,
+    email: str,
+    password: str,
+    totp_secret: str,
+    fetch_session,
+    progress: Callable[[str, str], None],
+    *,
+    email_api_url: str = "",
+    previous_email_otp: str | None = None,
+    email_label: str = "邮箱",
+) -> dict:
     deadline = time.monotonic() + 120
     password_sent = False
     totp_sent_at = 0.0
+    email_otp_sent = False
     while time.monotonic() < deadline:
         current = str(getattr(driver, "current_url", "") or "")
         if "chatgpt.com" in current:
@@ -264,6 +276,8 @@ def _complete_login(driver, email: str, password: str, totp_secret: str, fetch_s
                 pass
         password_input = _visible_input(driver, ['input[type="password"]', 'input[name="password"]'])
         if password_input and not password_sent:
+            if not str(password or "").strip():
+                raise RuntimeError(f"{email_label}登录要求密码，但导入的原邮箱记录只有 API 取码地址")
             progress("login_password", "填写账号密码")
             _set_value(driver, password_input, password)
             _submit_near(driver, password_input)
@@ -279,11 +293,34 @@ def _complete_login(driver, email: str, password: str, totp_secret: str, fetch_s
             "authenticator", "two-factor", "2fa", "verification app", "身份验证器", "动态验证码", "인증 앱",
         ))
         if code_input and totp_page and time.monotonic() - totp_sent_at > 8:
+            if not str(totp_secret or "").strip():
+                raise RuntimeError(f"{email_label}登录要求 2FA，但导入的原邮箱记录没有 MFA Secret")
             progress("login_totp", "提交原账号 2FA 动态码")
             code = pyotp.TOTP(totp_secret.replace(" ", "")).now()
             _set_value(driver, code_input, code)
             _submit_near(driver, code_input)
             totp_sent_at = time.monotonic()
+            time.sleep(2)
+            continue
+        email_otp_page = code_input and not totp_page and any(marker in text for marker in (
+            "verification", "one-time", "sent", "code", "验证码", "認証コード", "인증 코드",
+        ))
+        if email_otp_page and not email_otp_sent:
+            if not str(email_api_url or "").strip():
+                raise RuntimeError(f"{email_label}登录要求邮箱验证码，但没有对应的 API 取码地址")
+            progress("login_email_otp", f"通过{email_label} API 等待登录验证码")
+            code = mail_api.wait_for_new_otp(
+                email_api_url, email, previous=previous_email_otp,
+                max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
+                stop_check=lambda: _visible_input(driver, [
+                    'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
+                    'input[name="code"]',
+                ]) is None,
+            )
+            progress("submit_login_email_otp", f"提交{email_label}登录验证码")
+            _set_value(driver, code_input, code)
+            _submit_near(driver, code_input)
+            email_otp_sent = True
             time.sleep(2)
             continue
         errors = [line.strip() for line in _body_text(driver).splitlines() if "error" in line.lower() or "错误" in line]
@@ -328,17 +365,25 @@ def _change_email(
     new_email: str,
     password: str,
     totp_secret: str,
+    source_api_url: str = "",
     api_url: str,
     progress: Callable[[str, str], None],
 ) -> None:
     previous_otp = None
+    previous_source_otp = None
     try:
         previous_otp = mail_api.read_current_otp(api_url, new_email, timeout=4)
     except Exception:
         pass
+    if source_api_url:
+        try:
+            previous_source_otp = mail_api.read_current_otp(source_api_url, old_email, timeout=4)
+        except Exception:
+            pass
     deadline = time.monotonic() + 210
     new_email_sent = False
     otp_sent = False
+    source_otp_sent = False
     password_sent_at = 0.0
     totp_sent_at = 0.0
     while time.monotonic() < deadline:
@@ -354,6 +399,8 @@ def _change_email(
 
         password_input = _visible_input(driver, ['input[type="password"]', 'input[name="password"]'])
         if password_input and time.monotonic() - password_sent_at > 8:
+            if not str(password or "").strip():
+                raise RuntimeError("换绑前重新验证要求密码，但原邮箱使用的是 API 取码登录")
             progress("reauth_password", "换绑前重新验证账号密码")
             _set_value(driver, password_input, password)
             _submit_near(driver, password_input)
@@ -369,10 +416,37 @@ def _change_email(
             "authenticator", "two-factor", "2fa", "verification app", "身份验证器", "动态验证码", "인증 앱",
         ))
         if numeric_input and totp_page and not otp_sent and time.monotonic() - totp_sent_at > 8:
+            if not str(totp_secret or "").strip():
+                raise RuntimeError("换绑前重新验证要求 2FA，但原邮箱记录没有 MFA Secret")
             progress("reauth_totp", "换绑前重新验证 2FA")
             _set_value(driver, numeric_input, pyotp.TOTP(totp_secret.replace(" ", "")).now())
             _submit_near(driver, numeric_input)
             totp_sent_at = time.monotonic()
+            time.sleep(2)
+            continue
+
+        source_email_otp_page = (
+            numeric_input and not new_email_sent and not totp_page
+            and any(marker in lowered for marker in (
+                "verification", "one-time", "sent", "code", "验证码", "認証コード", "인증 코드",
+            ))
+        )
+        if source_email_otp_page and not source_otp_sent:
+            if not str(source_api_url or "").strip():
+                raise RuntimeError("换绑前重新验证要求原邮箱验证码，但原邮箱记录没有 API 取码地址")
+            progress("reauth_email_otp", "通过原邮箱 API 等待重新验证验证码")
+            code = mail_api.wait_for_new_otp(
+                source_api_url, old_email, previous=previous_source_otp,
+                max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
+                stop_check=lambda: _visible_input(driver, [
+                    'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
+                    'input[name="code"]',
+                ]) is None,
+            )
+            progress("submit_reauth_email_otp", "提交原邮箱重新验证验证码")
+            _set_value(driver, numeric_input, code)
+            _submit_near(driver, numeric_input)
+            source_otp_sent = True
             time.sleep(2)
             continue
 
@@ -442,6 +516,7 @@ def perform_email_rebind(
     new_email: str,
     password: str,
     totp_secret: str,
+    source_api_url: str = "",
     api_url: str,
     proxy_url: str,
     progress: Callable[[str, str], None] | None = None,
@@ -489,9 +564,19 @@ def perform_email_rebind(
         progress("open_roxy", f"Roxy 窗口代理检测通过（出口 {exit_geo.get('ip')}）")
 
         progress("login_old", f"使用原邮箱登录：{old_email}")
+        previous_old_login_otp = None
+        if source_api_url:
+            try:
+                previous_old_login_otp = mail_api.read_current_otp(source_api_url, old_email, timeout=4)
+            except Exception:
+                pass
         safe_get(driver, "https://chatgpt.com/auth/login", timeout=45, attempts=2, accept_hosts=("chatgpt.com", "auth.openai.com"))
         submit_email(driver, old_email, attempts=2)
-        old_session = _complete_login(driver, old_email, password, totp_secret, fetch_session, progress)
+        old_session = _complete_login(
+            driver, old_email, password, totp_secret, fetch_session, progress,
+            email_api_url=source_api_url, previous_email_otp=previous_old_login_otp,
+            email_label="原邮箱",
+        )
         observed_old = _session_email(old_session)
         if observed_old and observed_old.lower() != old_email.lower():
             raise RuntimeError(f"Roxy 登录态邮箱不匹配：期望 {old_email}，实际 {observed_old}")
@@ -503,16 +588,26 @@ def perform_email_rebind(
             new_email=new_email,
             password=password,
             totp_secret=totp_secret,
+            source_api_url=source_api_url,
             api_url=api_url,
             progress=progress,
         )
 
         try:
             progress("relogin_new", f"清理旧登录态并使用替换邮箱重新登录：{new_email}")
+            previous_new_login_otp = None
+            try:
+                previous_new_login_otp = mail_api.read_current_otp(api_url, new_email, timeout=4)
+            except Exception:
+                pass
             _clear_login_state(driver)
             safe_get(driver, "https://chatgpt.com/auth/login", timeout=45, attempts=2, accept_hosts=("chatgpt.com", "auth.openai.com"))
             submit_email(driver, new_email, attempts=2)
-            new_session = _complete_login(driver, new_email, password, totp_secret, fetch_session, progress)
+            new_session = _complete_login(
+                driver, new_email, password, totp_secret, fetch_session, progress,
+                email_api_url=api_url, previous_email_otp=previous_new_login_otp,
+                email_label="替换邮箱",
+            )
             observed_new = _session_email(new_session)
             if observed_new.lower() != new_email.lower():
                 raise RuntimeError(f"换绑后登录邮箱校验失败：期望 {new_email}，实际 {observed_new or '空'}")

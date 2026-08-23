@@ -8,42 +8,47 @@ import store
 
 
 class StoreTests(unittest.TestCase):
-    def test_smart_import_routes_account_and_email_url_lines(self):
+    def test_source_import_keeps_email_url_in_original_accounts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
                     patch.object(store, "_REPLACEMENTS", root / "replacements.json"):
-                result = store.import_smart_entries(
-                    "old@example.com----Password!----JBSWY3DPEHPK3PXP\n"
-                    "new@example.com----https://mail.example/code\n"
+                result = store.import_source_accounts(
+                    "old@example.com----https://mail.example/old-code\n"
+                    "old2@example.com----Password!----JBSWY3DPEHPK3PXP\n"
                     "bad input"
                 )
 
                 self.assertEqual(result["parsed"], 2)
-                self.assertEqual(result["account_parsed"], 1)
-                self.assertEqual(result["replacement_parsed"], 1)
                 self.assertEqual(result["inserted"], 2)
                 self.assertEqual(result["invalid"], [{
                     "line": 3,
-                    "reason": "需要：邮箱----密码----MFA Secret，或 邮箱----http(s)://API取码地址",
+                    "reason": "原邮箱需要：邮箱----http(s)://API取码地址，或 邮箱----密码----MFA Secret",
                 }])
-                self.assertEqual(store.list_accounts()[0]["old_email"], "old@example.com")
-                self.assertEqual(store.list_replacements()[0]["email"], "new@example.com")
-                self.assertTrue(store.list_replacements()[0]["has_api"])
+                accounts = store.list_accounts()
+                self.assertEqual([row["old_email"] for row in accounts], ["old@example.com", "old2@example.com"])
+                self.assertTrue(accounts[0]["has_api"])
+                self.assertFalse(accounts[0]["has_password"])
+                self.assertFalse(accounts[0]["has_totp"])
+                self.assertFalse(accounts[1]["has_api"])
+                self.assertTrue(accounts[1]["has_password"])
+                self.assertTrue(accounts[1]["has_totp"])
+                self.assertNotIn("api_url", accounts[0])
+                self.assertEqual(store.list_replacements(), [])
 
-    def test_smart_import_accepts_email_url_only(self):
+    def test_reimport_can_switch_original_account_login_method(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
-                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"):
-                result = store.import_smart_entries(
-                    "mail@example.com====https://mail.example/api?email={email}"
-                )
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"):
+                store.import_source_accounts("mail@example.com----Password!----JBSWY3DPEHPK3PXP")
+                result = store.import_source_accounts("mail@example.com====https://mail.example/api?email={email}")
 
-                self.assertEqual(result["account_parsed"], 0)
-                self.assertEqual(result["replacement_parsed"], 1)
-                self.assertEqual(store.list_accounts(), [])
-                self.assertEqual(store.list_replacements()[0]["email"], "mail@example.com")
+                self.assertEqual(result["parsed"], 1)
+                self.assertEqual(result["updated"], 1)
+                account = store.list_accounts()[0]
+                self.assertTrue(account["has_api"])
+                self.assertFalse(account["has_password"])
+                self.assertFalse(account["has_totp"])
 
     def test_delete_replacement_and_proxy_when_idle(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,6 +135,23 @@ class StoreTests(unittest.TestCase):
                 closed = store.mark_roxy_profile_closed(account["id"])
                 self.assertEqual(closed["roxy_browser_status"], "closed")
                 self.assertEqual(store.summary()["roxy_open"], 0)
+
+    def test_email_api_source_is_exported_with_original_email_and_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"):
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                task = store.reserve_batch()[0]
+                store.finish_success(task["id"], {"email": "new@example.com", "access_token": "at-new"})
+
+                self.assertEqual(
+                    store.export_success_lines(),
+                    ["new@example.com----old@example.com----https://mail.example/old----at-new"],
+                )
 
     def test_failure_releases_replacement(self):
         with tempfile.TemporaryDirectory() as tmp:

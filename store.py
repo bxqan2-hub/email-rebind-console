@@ -61,10 +61,11 @@ def _parts(line: str) -> list[str]:
 def _public_account(row: dict) -> dict:
     return {
         key: value for key, value in row.items()
-        if key not in {"password", "totp_secret", "access_token"}
+        if key not in {"password", "totp_secret", "api_url", "access_token"}
     } | {
         "has_password": bool(row.get("password")),
         "has_totp": bool(row.get("totp_secret")),
+        "has_api": bool(row.get("api_url")),
         "has_access_token": bool(row.get("access_token")),
     }
 
@@ -302,7 +303,7 @@ def assign_task_proxy(task_id: int, proxy: dict, proxy_attempt: int) -> bool:
 
 
 def import_source_accounts(text: str) -> dict:
-    """识别主站导出格式：邮箱----密码----MFA Secret。"""
+    """只导入原邮箱账号，支持密码+2FA或邮箱API取码两种登录资料。"""
     parsed: list[dict] = []
     invalid: list[dict] = []
     for number, raw in enumerate(str(text or "").splitlines(), start=1):
@@ -310,10 +311,24 @@ def import_source_accounts(text: str) -> dict:
         if not line or line.startswith("#"):
             continue
         parts = _parts(line)
-        if len(parts) < 3 or not _EMAIL_RE.match(parts[0]) or not parts[1] or not parts[2]:
-            invalid.append({"line": number, "reason": "需要：邮箱----密码----MFA Secret"})
+        email_valid = bool(parts and _EMAIL_RE.match(parts[0]))
+        if (
+            email_valid
+            and len(parts) == 2
+            and parts[1].lower().startswith(("http://", "https://"))
+        ):
+            parsed.append({"email": parts[0], "api_url": parts[1], "auth_method": "email_api"})
             continue
-        parsed.append({"email": parts[0], "password": parts[1], "totp_secret": parts[2]})
+        if email_valid and len(parts) >= 3 and parts[1] and parts[2]:
+            parsed.append({
+                "email": parts[0], "password": parts[1],
+                "totp_secret": parts[2], "auth_method": "password_totp",
+            })
+            continue
+        invalid.append({
+            "line": number,
+            "reason": "原邮箱需要：邮箱----http(s)://API取码地址，或 邮箱----密码----MFA Secret",
+        })
 
     with _LOCK:
         rows = _read(_ACCOUNTS)
@@ -339,54 +354,18 @@ def import_source_accounts(text: str) -> dict:
                 if row.get("status") not in {"running", "success"}:
                     row["status"] = "ready"
                     row["error"] = ""
-            row["password"] = item["password"]
-            row["totp_secret"] = item["totp_secret"]
+            row["auth_method"] = item["auth_method"]
+            if item["auth_method"] == "email_api":
+                row["api_url"] = item["api_url"]
+                row.pop("password", None)
+                row.pop("totp_secret", None)
+            else:
+                row["password"] = item["password"]
+                row["totp_secret"] = item["totp_secret"]
+                row.pop("api_url", None)
             row["updated_at"] = now
         _write(_ACCOUNTS, rows)
     return {"parsed": len(parsed), "inserted": inserted, "updated": updated, "invalid": invalid}
-
-
-def import_smart_entries(text: str) -> dict:
-    """混合识别原账号与替换邮箱，并将邮箱+URL自动送入替换邮箱号池。"""
-    account_lines: list[str] = []
-    replacement_lines: list[str] = []
-    invalid: list[dict] = []
-
-    for number, raw in enumerate(str(text or "").splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = _parts(line)
-        email_valid = bool(parts and _EMAIL_RE.match(parts[0]))
-        if email_valid and len(parts) >= 3 and parts[1] and parts[2]:
-            account_lines.append(line)
-        elif (
-            email_valid
-            and len(parts) >= 2
-            and parts[1].lower().startswith(("http://", "https://"))
-        ):
-            replacement_lines.append(line)
-        else:
-            invalid.append({
-                "line": number,
-                "reason": "需要：邮箱----密码----MFA Secret，或 邮箱----http(s)://API取码地址",
-            })
-
-    empty = {"parsed": 0, "inserted": 0, "updated": 0, "invalid": []}
-    accounts = import_source_accounts("\n".join(account_lines)) if account_lines else dict(empty)
-    replacements = import_replacement_emails("\n".join(replacement_lines)) if replacement_lines else dict(empty)
-    return {
-        "parsed": int(accounts["parsed"]) + int(replacements["parsed"]),
-        "inserted": int(accounts["inserted"]) + int(replacements["inserted"]),
-        "updated": int(accounts["updated"]) + int(replacements["updated"]),
-        "invalid": invalid,
-        "account_parsed": int(accounts["parsed"]),
-        "account_inserted": int(accounts["inserted"]),
-        "account_updated": int(accounts["updated"]),
-        "replacement_parsed": int(replacements["parsed"]),
-        "replacement_inserted": int(replacements["inserted"]),
-        "replacement_updated": int(replacements["updated"]),
-    }
 
 
 def import_replacement_emails(text: str) -> dict:
@@ -953,14 +932,18 @@ def export_success_lines() -> list[str]:
     with _LOCK:
         rows = [row for row in _read(_ACCOUNTS) if row.get("status") == "success"]
         rows.sort(key=lambda row: int(row.get("id") or 0))
-        return [
-            "----".join([
-                str(row.get("new_email") or row.get("current_email") or "").strip(),
-                str(row.get("password") or "").strip(),
-                str(row.get("totp_secret") or "").strip(),
-                str(row.get("access_token") or "").strip(),
-            ])
-            for row in rows
-            if all(str(row.get(key) or "").strip() for key in ("password", "totp_secret", "access_token"))
-            and str(row.get("new_email") or row.get("current_email") or "").strip()
-        ]
+        exported: list[str] = []
+        for row in rows:
+            new_email = str(row.get("new_email") or row.get("current_email") or "").strip()
+            access_token = str(row.get("access_token") or "").strip()
+            password = str(row.get("password") or "").strip()
+            totp_secret = str(row.get("totp_secret") or "").strip()
+            old_email = str(row.get("old_email") or "").strip()
+            source_api_url = str(row.get("api_url") or "").strip()
+            if not new_email or not access_token:
+                continue
+            if password and totp_secret:
+                exported.append("----".join([new_email, password, totp_secret, access_token]))
+            elif old_email and source_api_url:
+                exported.append("----".join([new_email, old_email, source_api_url, access_token]))
+        return exported

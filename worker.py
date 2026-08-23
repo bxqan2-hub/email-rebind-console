@@ -106,6 +106,7 @@ def _run(task_id: int) -> None:
                 new_email=str(replacement.get("email") or ""),
                 password=str(account.get("password") or ""),
                 totp_secret=str(account.get("totp_secret") or ""),
+                source_api_url=str(account.get("api_url") or ""),
                 api_url=str(replacement.get("api_url") or ""),
                 proxy_url=str(active_proxy.get("proxy_url") or ""),
                 progress=progress,

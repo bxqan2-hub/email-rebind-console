@@ -37,6 +37,7 @@ class WorkerRotationTests(unittest.TestCase):
                 worker._run(initial["id"])
 
                 self.assertEqual(perform.call_count, 2)
+                self.assertEqual(perform.call_args_list[0].kwargs["source_api_url"], "")
                 replacements = {row["email"]: row for row in store.list_replacements()}
                 self.assertEqual(replacements["bad@example.com"]["status"], "failed")
                 self.assertEqual(replacements["bad@example.com"]["failure_code"], "otp_unavailable")
@@ -49,6 +50,28 @@ class WorkerRotationTests(unittest.TestCase):
                 self.assertEqual(tasks[0]["next_task_id"], tasks[1]["id"])
                 self.assertEqual(tasks[1]["retry_of_task_id"], tasks[0]["id"])
                 self.assertEqual(tasks[1]["attempt"], 2)
+
+    def test_worker_passes_original_email_api_separately_from_replacement_api(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
+                    patch.object(worker.roxy_flow, "perform_email_rebind", return_value={
+                        "email": "new@example.com", "access_token": "at-new",
+                    }) as perform:
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                store.import_proxies("http://proxy.example:8080")
+                worker._run(store.reserve_batch()[0]["id"])
+
+                kwargs = perform.call_args.kwargs
+                self.assertEqual(kwargs["source_api_url"], "https://mail.example/old")
+                self.assertEqual(kwargs["api_url"], "https://mail.example/new")
+                self.assertEqual(kwargs["password"], "")
+                self.assertEqual(kwargs["totp_secret"], "")
 
     def test_pool_exhaustion_keeps_account_failed_with_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
