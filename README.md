@@ -1,5 +1,15 @@
 # 邮箱换绑分站
 
+## GitHub 自动发布规则
+
+本项目固定发布到私有仓库
+`https://github.com/bxqan2-hub/email-rebind-console` 的
+`codex/email-rebind-console` 分支，不使用主站仓库。
+
+当前工作副本运行一次 `setup-git-hooks.bat` 后，每次完成修改并提交时，
+`.githooks/post-commit` 会自动推送；`.githooks/pre-push` 会阻止误推到主站、
+误推其他分支、改写目标或删除远程分支。完整交付规则见 `AGENTS.md`。
+
 > **项目身份（请勿与主站混淆）**：本目录是独立的“邮箱换绑分站”Git 项目，
 > 不是 `turb-gpt-free-register` 注册与账号管理主站，也不是主站仓库中的子目录。
 

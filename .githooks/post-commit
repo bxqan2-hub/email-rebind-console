@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+set -eu
+
+expected_remote="rebind-origin"
+expected_url="https://github.com/bxqan2-hub/email-rebind-console.git"
+expected_branch="codex/email-rebind-console"
+
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
+if [ "$branch" != "$expected_branch" ]; then
+  echo "AUTO_PUSH_ERROR=branch guard failed: $branch" >&2
+  exit 1
+fi
+
+actual_url="$(git remote get-url "$expected_remote" 2>/dev/null || true)"
+if [ "$actual_url" != "$expected_url" ]; then
+  echo "AUTO_PUSH_ERROR=remote guard failed: $actual_url" >&2
+  exit 1
+fi
+
+echo "AUTO_PUSH_TARGET=$expected_remote/$expected_branch"
+git push "$expected_remote" "refs/heads/$expected_branch:refs/heads/$expected_branch"
+echo "AUTO_PUSH_RESULT=success;head=$(git rev-parse HEAD)"

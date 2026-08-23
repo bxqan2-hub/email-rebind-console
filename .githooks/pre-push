@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+set -eu
+
+expected_remote="rebind-origin"
+expected_url="https://github.com/bxqan2-hub/email-rebind-console.git"
+expected_ref="refs/heads/codex/email-rebind-console"
+
+remote_name="${1:-}"
+remote_url="${2:-}"
+if [ "$remote_name" != "$expected_remote" ] || [ "$remote_url" != "$expected_url" ]; then
+  echo "PUSH_GUARD_ERROR=only $expected_remote ($expected_url) is allowed" >&2
+  exit 1
+fi
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_ref:-}" ] || continue
+  if [ "$local_ref" != "$expected_ref" ] || [ "$remote_ref" != "$expected_ref" ]; then
+    echo "PUSH_GUARD_ERROR=only $expected_ref may be pushed;local=$local_ref;remote=$remote_ref" >&2
+    exit 1
+  fi
+  case "$local_sha" in
+    0000000000000000000000000000000000000000)
+      echo "PUSH_GUARD_ERROR=remote branch deletion is blocked" >&2
+      exit 1
+      ;;
+  esac
+done
+
+echo "PUSH_GUARD_RESULT=allowed;remote=$expected_remote;ref=$expected_ref"
