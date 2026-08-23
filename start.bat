@@ -36,7 +36,7 @@ endlocal
 exit /b 1
 
 :open
-start "" "%APP_URL%"
+start "" /MAX "%APP_URL%"
 endlocal
 exit /b 0
 

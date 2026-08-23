@@ -258,6 +258,10 @@ class AppTests(unittest.TestCase):
         self.assertIn("data-retry-account", script)
         self.assertIn("自动重试中", script)
         self.assertIn("失败重试", script)
+        css = Path("static/app.css").read_text(encoding="utf-8")
+        self.assertIn("Compact layout for smaller station windows", css)
+        self.assertIn("white-space:normal", css)
+        self.assertIn("max-width:1800px", css)
         self.assertIn("btn danger", script)
 
     def test_failed_account_retry_route_submits_traced_task(self):

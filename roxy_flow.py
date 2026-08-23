@@ -138,6 +138,7 @@ def _retained_or_reopen(profile_id: str, expected_email: str) -> dict:
     client = RoxyBrowserClient()
     opened = _open_existing_profile(client, key)
     driver = build_driver(opened)
+    _enlarge_browser_window(driver)
     center_window(driver)
     driver.set_page_load_timeout(60)
     driver.set_script_timeout(60)
@@ -209,6 +210,19 @@ def _body_text(driver) -> str:
         return str(driver.execute_script("return (document.body && document.body.innerText) || ''") or "")
     except Exception:
         return ""
+
+
+def _enlarge_browser_window(driver) -> None:
+    """在 Roxy 居中前把可见窗口放大，避免账号/检测信息落到折叠区域。"""
+    try:
+        current = driver.get_window_size() or {}
+        width = max(int(current.get("width") or 0), int(settings.ROXY_WINDOW_WIDTH))
+        height = max(int(current.get("height") or 0), int(settings.ROXY_WINDOW_HEIGHT))
+        driver.set_window_size(width, height)
+        logger.info("[Roxy] 可见窗口已放大：width=%s height=%s", width, height)
+    except Exception as exc:
+        # 某些驱动只提供固定窗口尺寸；这不应阻塞协议流程。
+        logger.warning("[Roxy] 可见窗口放大失败，继续使用默认尺寸：%s", exc)
 
 
 def _visible_input(driver, selectors: list[str]):
@@ -749,6 +763,7 @@ def perform_replacement_login(
         exit_geo = dict(getattr(opened, "preflight_exit_geo", {}) or {})
         progress("open_roxy", f"补救登录窗口代理预检通过（出口 {exit_geo.get('ip') or '已确认'}）")
         driver = build_driver(opened)
+        _enlarge_browser_window(driver)
         center_window(driver)
         driver.set_page_load_timeout(60)
         driver.set_script_timeout(60)
@@ -854,6 +869,7 @@ def perform_email_rebind(
         exit_geo = dict(getattr(opened, "preflight_exit_geo", {}) or {})
         progress("open_roxy", f"代理预检通过（出口 {exit_geo.get('ip') or '已确认'}），创建并打开 Roxy 环境")
         driver = build_driver(opened)
+        _enlarge_browser_window(driver)
         center_window(driver)
         driver.set_page_load_timeout(60)
         driver.set_script_timeout(60)
