@@ -110,7 +110,8 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 - “关闭窗口”：只关闭 Roxy 窗口并保留 Profile；以后仍可点击“重新获取 AT”重开。
 
 完成账号表会显示 Profile ID、窗口状态、AT 更新时间和失败原因。重新获取成功后，
-页面会自动刷新并明确显示“AT 已更新”或“AT 未变化”；若 AT 已更新，导出结果立即使用新 AT。
+页面会自动刷新并明确显示“AT 已更新”或“AT 未变化”；获取到的 AT 会原子保存并回读校验，
+复制结果和下载 TXT 都立即使用已保存的 AT。
 
 邮箱 API 默认校验 HTTPS 证书；只有内部自签名接口需要在启动前设置
 `EMAIL_REBIND_MAIL_VERIFY_TLS=0`。也可用 `EMAIL_REBIND_PORT`、

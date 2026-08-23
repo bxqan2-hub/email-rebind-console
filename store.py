@@ -68,6 +68,7 @@ def _public_account(row: dict) -> dict:
         "has_api": bool(row.get("api_url")),
         "has_replacement_api": bool(row.get("replacement_api_url")),
         "has_access_token": bool(row.get("access_token")),
+        "at_saved": bool(row.get("access_token")),
     }
 
 
@@ -912,12 +913,18 @@ def finish_access_token_refresh(account_id: int, result: dict) -> dict | None:
         row.update({
             "access_token": access_token, "at_refresh_status": "success",
             "at_token_changed": token_changed,
-            "at_refreshed_at": now, "roxy_browser_status": "open",
+            "at_refreshed_at": now, "at_saved_at": now, "roxy_browser_status": "open",
             "updated_at": now,
         })
         row.pop("at_refresh_error", None)
         _write(_ACCOUNTS, rows)
-        return _public_account(row)
+        persisted = next((
+            item for item in _read(_ACCOUNTS)
+            if int(item.get("id") or 0) == int(account_id)
+        ), None)
+        if not persisted or str(persisted.get("access_token") or "").strip() != access_token:
+            raise OSError("重新获取的 AT 持久化校验失败")
+        return _public_account(persisted)
 
 
 def fail_access_token_refresh(account_id: int, error: str, *, browser_open: bool = False) -> dict | None:
@@ -991,6 +998,7 @@ def finish_success(task_id: int, result: dict) -> None:
             "status": "success", "current_email": verified_email, "new_email": verified_email,
             "replacement_api_url": str(replacement.get("api_url") or "").strip(),
             "access_token": access_token, "rebound_at": now, "at_refreshed_at": now,
+            "at_saved_at": now,
             "at_refresh_status": "success", "roxy_profile_id": profile_id,
             "roxy_browser_status": "open", "updated_at": now,
         })

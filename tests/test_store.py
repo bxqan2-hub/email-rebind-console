@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -178,6 +179,11 @@ class StoreTests(unittest.TestCase):
                 refreshed = store.finish_access_token_refresh(account["id"], {"access_token": "at-plus"})
                 self.assertEqual(refreshed["at_refresh_status"], "success")
                 self.assertTrue(refreshed["at_token_changed"])
+                self.assertTrue(refreshed["at_saved"])
+                self.assertTrue(refreshed["at_saved_at"])
+                persisted = json.loads((root / "accounts.json").read_text(encoding="utf-8"))[0]
+                self.assertEqual(persisted["access_token"], "at-plus")
+                self.assertEqual(persisted["at_saved_at"], refreshed["at_saved_at"])
                 self.assertEqual(
                     store.export_success_lines(),
                     ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
@@ -186,6 +192,7 @@ class StoreTests(unittest.TestCase):
                 self.assertNotIn("at_token_changed", restarted)
                 unchanged = store.finish_access_token_refresh(account["id"], {"access_token": "at-plus"})
                 self.assertFalse(unchanged["at_token_changed"])
+                self.assertTrue(unchanged["at_saved"])
                 self.assertEqual(
                     store.export_success_lines(),
                     ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],

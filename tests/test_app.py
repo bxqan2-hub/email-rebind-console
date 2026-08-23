@@ -100,7 +100,10 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(started.status_code, 200)
                 self.assertEqual(started.get_json()["submitted"], 1)
                 task = store.list_tasks()[0]
-                store.finish_success(task["id"], {"email": "new@example.com", "access_token": "at-new"})
+                store.finish_success(task["id"], {
+                    "email": "new@example.com", "access_token": "at-new",
+                    "roxy_profile_id": "profile-1",
+                })
                 account_id = store.list_accounts()[0]["id"]
                 exported = client.get("/api/export")
                 self.assertEqual(exported.status_code, 200)
@@ -112,6 +115,15 @@ class AppTests(unittest.TestCase):
                 one = client.get(f"/api/accounts/{account_id}/export")
                 self.assertEqual(one.status_code, 200)
                 self.assertEqual(one.get_data(as_text=True), exported.get_data(as_text=True))
+                self.assertIsNotNone(store.begin_access_token_refresh(account_id))
+                saved = store.finish_access_token_refresh(account_id, {"access_token": "at-saved"})
+                self.assertTrue(saved["at_saved"])
+                self.assertNotIn("access_token", saved)
+                refreshed_export = client.get(f"/api/accounts/{account_id}/export")
+                self.assertIn("----at-saved\n", refreshed_export.get_data(as_text=True))
+                public = client.get("/api/state").get_json()["accounts"][0]
+                self.assertTrue(public["at_saved"])
+                self.assertTrue(public["at_saved_at"])
 
     def test_failed_task_log_cleanup_routes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -158,6 +170,8 @@ class AppTests(unittest.TestCase):
         self.assertIn("waitForAccessTokenRefresh", script)
         self.assertIn("AT 已更新", script)
         self.assertIn("AT 未变化", script)
+        self.assertIn("已保存，可复制/下载", script)
+        self.assertIn("AT 已更新并保存，可复制或下载 TXT", script)
         self.assertIn("data-close-roxy", script)
         self.assertIn("data-copy-export", script)
         self.assertIn("data-download-export", script)
