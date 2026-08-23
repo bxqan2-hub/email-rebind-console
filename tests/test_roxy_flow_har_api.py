@@ -26,26 +26,28 @@ class HarGuidedEmailChangeTests(unittest.TestCase):
         self.assertEqual(len(begin), 53)
         self.assertEqual(len(verify), 69)
 
-    def test_browser_request_uses_roxy_cookies_without_exporting_token(self):
+    def test_browser_request_uses_roxy_cookie_and_session_authorization(self):
         driver = Mock()
         driver.execute_async_script.return_value = {"ok": True, "status": 200, "data": {"success": True}}
         result = roxy_flow._browser_json_request(
             driver, "POST", "/backend-api/accounts/change_email/begin",
-            account_id="account-test", body={"email": "new@example.com"},
+            account_id="account-test", access_token="token-test",
+            body={"email": "new@example.com"},
         )
 
         args = driver.execute_async_script.call_args.args
         self.assertEqual(args[1:], (
             "POST", "/backend-api/accounts/change_email/begin", "account-test",
-            {"email": "new@example.com"}, 45000.0,
+            "token-test", {"email": "new@example.com"}, 45000.0,
         ))
         self.assertIn("credentials:'include'", args[0])
-        self.assertNotIn("authorization", args[0].lower())
+        self.assertIn("authorization", args[0].lower())
         self.assertEqual(result["status"], 200)
 
     def test_har_api_uses_eligibility_begin_verify_and_logout_sequence(self):
         driver = Mock(current_url="https://chatgpt.com/#settings/Account")
         progress = Mock()
+        session = _session()
         responses = [
             {"ok": True, "status": 200, "data": {"eligible": True, "eligibility_type": "password"}},
             {"ok": True, "status": 200, "data": {"success": True}},
@@ -56,7 +58,7 @@ class HarGuidedEmailChangeTests(unittest.TestCase):
                 patch.object(roxy_flow.mail_api, "wait_for_new_otp", return_value="222222") as wait:
             roxy_flow._change_email_via_har_api(
                 driver,
-                session=_session(),
+                session=session,
                 new_email="new@example.com",
                 api_url="https://mail.example/new",
                 progress=progress,
@@ -65,14 +67,16 @@ class HarGuidedEmailChangeTests(unittest.TestCase):
         self.assertEqual(request.call_args_list, [
             call(
                 driver, "GET", "/backend-api/accounts/change_email/eligibility",
+                account_id="account-test", access_token=session["accessToken"],
             ),
             call(
                 driver, "POST", "/backend-api/accounts/change_email/begin",
-                account_id="account-test", body={"email": "new@example.com"},
+                account_id="account-test", access_token=session["accessToken"],
+                body={"email": "new@example.com"},
             ),
             call(
                 driver, "POST", "/backend-api/accounts/change_email/verify",
-                account_id="account-test",
+                account_id="account-test", access_token=session["accessToken"],
                 body={"email": "new@example.com", "code": "222222"},
             ),
         ])

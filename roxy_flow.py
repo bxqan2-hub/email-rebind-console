@@ -306,6 +306,7 @@ def _browser_json_request(
     path: str,
     *,
     account_id: str = "",
+    access_token: str = "",
     body: dict | None = None,
     timeout: float = 45.0,
 ) -> dict:
@@ -314,9 +315,10 @@ def _browser_json_request(
     const method = String(arguments[0] || 'GET').toUpperCase();
     const path = String(arguments[1] || '');
     const accountId = String(arguments[2] || '');
-    const body = arguments[3];
-    const timeoutMs = Math.max(1000, Number(arguments[4]) || 45000);
-    const done = arguments[5];
+    const accessToken = String(arguments[3] || '');
+    const body = arguments[4];
+    const timeoutMs = Math.max(1000, Number(arguments[5]) || 45000);
+    const done = arguments[6];
     const controller = new AbortController();
     let finished = false;
     const finish = value => {
@@ -331,6 +333,7 @@ def _browser_json_request(
     }, timeoutMs);
     const headers = {'accept':'application/json'};
     if (accountId) headers['chatgpt-account-id'] = accountId;
+    if (accessToken) headers['authorization'] = `Bearer ${accessToken}`;
     if (body !== null && body !== undefined) headers['content-type'] = 'application/json';
     fetch(path, {
       method,
@@ -352,6 +355,7 @@ def _browser_json_request(
             str(method or "GET"),
             str(path or ""),
             str(account_id or ""),
+            str(access_token or ""),
             body,
             max(1.0, float(timeout or 45.0)) * 1000,
         )
@@ -395,12 +399,16 @@ def _change_email_via_har_api(
 ) -> None:
     """按已验证 HAR 时序执行 eligibility → begin → verify → logout。"""
     account_id = _session_account_id(session)
+    access_token = str((session or {}).get("accessToken") or "").strip()
     if not account_id:
         raise _HarApiUnavailable("登录 session 中没有 chatgpt_account_id")
+    if not access_token:
+        raise _HarApiUnavailable("登录 session 中没有 accessToken")
 
     progress("check_email_eligibility", "检查当前账号的邮箱换绑资格")
     eligibility = _browser_json_request(
         driver, "GET", "/backend-api/accounts/change_email/eligibility",
+        account_id=account_id, access_token=access_token,
     )
     if not eligibility.get("ok") or int(eligibility.get("status") or 0) in {404, 405}:
         raise _HarApiUnavailable("换绑资格接口不可用")
@@ -431,7 +439,7 @@ def _change_email_via_har_api(
         begin_body["remove_social_subs"] = True
     begin = _browser_json_request(
         driver, "POST", "/backend-api/accounts/change_email/begin",
-        account_id=account_id, body=begin_body,
+        account_id=account_id, access_token=access_token, body=begin_body,
     )
     if not begin.get("ok"):
         raise RuntimeError("提交替换邮箱后未取得服务端响应，可使用失败重试")
@@ -471,7 +479,7 @@ def _change_email_via_har_api(
         verify_body["remove_social_subs"] = True
     verified = _browser_json_request(
         driver, "POST", "/backend-api/accounts/change_email/verify",
-        account_id=account_id,
+        account_id=account_id, access_token=access_token,
         body=verify_body,
     )
     if not verified.get("ok"):
