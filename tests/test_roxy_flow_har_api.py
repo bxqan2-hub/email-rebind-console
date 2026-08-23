@@ -188,19 +188,6 @@ class HarGuidedEmailChangeTests(unittest.TestCase):
             "reauth_required",
         )
 
-    def test_account_settings_prefers_versioned_testids(self):
-        driver = Mock()
-        driver.execute_script.side_effect = ["clicked", "ready"]
-        safe_get = Mock()
-        with patch.object(roxy_flow.time, "sleep"):
-            roxy_flow._open_account_settings(driver, "old@example.com", safe_get, Mock())
-
-        script = driver.execute_script.call_args.args[0]
-        self.assertIn('data-testid="account-info-email"', script)
-        self.assertIn('data-testid="modal-edit-email"', script)
-        self.assertEqual(driver.execute_script.call_count, 2)
-        safe_get.assert_called_once()
-
     def test_segmented_otp_fills_each_box_without_single_input_fallback(self):
         driver = Mock()
         driver.execute_script.return_value = 6
@@ -211,66 +198,23 @@ class HarGuidedEmailChangeTests(unittest.TestCase):
         self.assertIn("Number(el.maxLength) === 1", driver.execute_script.call_args.args[0])
         self.assertIn('data-testid="modal-add-email-otp"', driver.execute_script.call_args.args[0])
 
-    def test_dom_fallback_accepts_logout_after_otp_submit(self):
-        class ScriptedDriver:
-            def __init__(self):
-                self.urls = iter([
-                    "https://chatgpt.com/#settings/Account",
-                    "https://chatgpt.com/#settings/Account",
-                    "https://chatgpt.com/auth/logout",
-                ])
-
-            @property
-            def current_url(self):
-                return next(self.urls)
-
-            @staticmethod
-            def execute_script(script, *_args):
-                return "modal-add-email-otp" in script or "modal-edit-email" in script
-
-        driver = ScriptedDriver()
-        email_input = Mock()
-        otp_input = Mock()
-        progress = Mock()
-        with patch.object(roxy_flow, "_body_text", side_effect=["Change email", "Verification code", ""]), \
-                patch.object(roxy_flow, "_visible_input", side_effect=[
-                    None, None, email_input,
-                    None, otp_input, None,
-                ]), patch.object(roxy_flow, "_set_value"), \
-                patch.object(roxy_flow, "_set_otp_value"), \
-                patch.object(roxy_flow, "_submit_near"), \
-                patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None), \
-                patch.object(roxy_flow.mail_api, "wait_for_new_otp", return_value="222222"), \
-                patch.object(roxy_flow.time, "sleep"):
-            roxy_flow._change_email(
-                driver, old_email="old@example.com", new_email="new@example.com",
-                password="Password!", totp_secret="SECRET",
-                api_url="https://mail.example/new", progress=progress,
-            )
-        progress.assert_any_call("changed", "服务端已完成邮箱更新并退出旧登录态")
-
-    def test_missing_har_api_falls_back_before_begin(self):
+    def test_har_api_unavailable_propagates_without_dom_fallback(self):
         driver = Mock()
         with patch.object(
             roxy_flow, "_change_email_via_har_api",
             side_effect=roxy_flow._HarApiUnavailable("missing"),
-        ), patch.object(roxy_flow, "_open_account_settings") as open_settings, \
-                patch.object(roxy_flow, "_change_email") as dom_change:
-            roxy_flow._change_email_har_guided(
-                driver,
-                session=_session(),
-                old_email="old@example.com",
-                new_email="new@example.com",
-                password="Password!",
-                totp_secret="SECRET",
-                source_api_url="https://mail.example/old",
-                api_url="https://mail.example/new",
-                safe_get=Mock(),
-                progress=Mock(),
-            )
+        ) as api_call:
+            with self.assertRaises(roxy_flow._HarApiUnavailable):
+                roxy_flow._change_email_har_guided(
+                    driver,
+                    session=_session(),
+                    new_email="new@example.com",
+                    api_url="https://mail.example/new",
+                    progress=Mock(),
+                )
 
-        open_settings.assert_called_once()
-        dom_change.assert_called_once()
+        api_call.assert_called_once()
+        driver.execute_script.assert_not_called()
 
 
 if __name__ == "__main__":

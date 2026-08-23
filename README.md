@@ -78,7 +78,7 @@ $env:EMAIL_REBIND_HOST='127.0.0.3'; $env:EMAIL_REBIND_PORT='5092'; & 'C:\Users\A
 
 浏览器打开 <http://127.0.0.3:5092/>。双击 `start.bat` 会先强制停止 5092 端口上的现有分站进程，再启动并打开该地址。
 
-换绑遵循 ChatGPT 网页流程：登录 → Settings → Account → 点击当前邮箱 → 新邮箱验证 → 退出 → 用新邮箱重新登录并读取 `/api/auth/session` 的新 AT。
+换绑使用 ChatGPT 同源 API 协议：登录原邮箱 → eligibility → begin → 新邮箱验证码 → verify → 退出 → 用新邮箱重新登录并读取 `/api/auth/session` 的新 AT。邮箱换绑过程不打开 Settings，不点击邮箱，不执行 DOM 兜底。
 
 ## HAR 验证的换绑契约
 
@@ -90,15 +90,7 @@ $env:EMAIL_REBIND_HOST='127.0.0.3'; $env:EMAIL_REBIND_PORT='5092'; & 'C:\Users\A
 其中 `verify` 的 `200`/`success=true` 是服务端已经换绑的提交点；`/auth/logout` 是网页成功回调触发的后续退出动作，不能再只等待 `/auth/login`。
 
 同版本前端资源确认 `begin` 使用 `{email}`，`verify` 使用 `{email, code}`；
-`social_password` 类型的两个请求还带 `remove_social_subs=true`。DOM 兜底使用版本化稳定标识：
-
-```text
-[data-testid="account-info-email"]
-[data-testid="modal-edit-email"] input[name="email"]
-[data-testid="modal-add-email-otp"] input[name="verification_code"]
-```
-
-实现会优先在当前 Roxy 登录页面内执行同源请求；接口缺失或需要页面重新认证时才退回 DOM 流程。
+`social_password` 类型的两个请求还带 `remove_social_subs=true`。实现只在当前 Roxy 登录页面内执行这些同源请求；接口不可用时直接结束本轮，由工作线程关闭并删除窗口后重新创建环境、重新登录并再次走 API 协议，不切换到 Settings/DOM 流程。
 抓包原文件、Cookie、验证码、邮箱、AT 和请求头值均不写入仓库或日志。
 
 ## 成功窗口与 AT 刷新
@@ -113,7 +105,7 @@ $env:EMAIL_REBIND_HOST='127.0.0.3'; $env:EMAIL_REBIND_PORT='5092'; & 'C:\Users\A
 
 ### 临时故障自动重试
 
-- 登录页超时、Roxy/浏览器临时错误，以及换绑开始请求未取得响应时，系统会保持同一原邮箱和替换邮箱，自动重新创建环境并切换到下一条代理重试。
+- 登录页超时、Roxy/浏览器临时错误、换绑 API 不可用，以及换绑开始请求未取得响应时，系统会保持同一原邮箱和替换邮箱，先关闭并删除失败窗口，再自动重新创建环境并切换到下一条代理重试；邮箱换绑始终只走 API 协议。
 - 默认自动重试 2 次；验证码已经提交、服务端已确认但最终状态不明确的任务仍进入待核验，不会自动换下一个邮箱。
 - 可用 `EMAIL_REBIND_MAX_TRANSIENT_RETRIES` 调整次数（0~10），用 `EMAIL_REBIND_TRANSIENT_RETRY_DELAY` 调整每次重试前等待秒数（0~30）。
 - 自动重试耗尽后，任务和账号保留为失败状态，替换邮箱释放回可用池，仍可使用“失败重试”手动再次执行。

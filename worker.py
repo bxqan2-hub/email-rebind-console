@@ -19,7 +19,7 @@ _ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-r
 _TRANSIENT_STAGES = {
     "queued", "running", "open_roxy", "check_proxy", "login_old", "login_password", "login_totp",
     "login_email_otp", "submit_login_email_otp", "check_email_eligibility",
-    "open_settings", "submit_new_email",
+    "submit_new_email",
 }
 _NON_RETRYABLE_MARKERS = (
     "不符合自助换绑条件", "社交登录账号", "需要密码", "没有 mfa", "没有对应的 api",

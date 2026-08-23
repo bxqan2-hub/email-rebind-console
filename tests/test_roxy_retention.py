@@ -96,13 +96,13 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertIn("driver.quit", events)
         self.assertNotIn("profile-1", roxy_flow._RETAINED)
 
-    def test_failure_quits_driver_and_cleans_temporary_profile(self):
+    def test_api_failure_quits_driver_and_deletes_temporary_profile_before_retry(self):
         events = []
         loaded, _driver, _client_box = self._loaded(events)
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
                 patch.object(roxy_flow, "_complete_login", return_value={"user": {"email": "old@example.com"}}), \
-                patch.object(roxy_flow, "_change_email_har_guided", side_effect=RuntimeError("settings failed")):
-            with self.assertRaisesRegex(RuntimeError, "settings failed"):
+                patch.object(roxy_flow, "_change_email_har_guided", side_effect=roxy_flow._HarApiUnavailable("API unavailable")):
+            with self.assertRaisesRegex(roxy_flow._HarApiUnavailable, "API unavailable"):
                 roxy_flow.perform_email_rebind(
                     old_email="old@example.com", new_email="new@example.com",
                     password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
@@ -112,6 +112,8 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertIn("driver.quit", events)
         self.assertIn("close:profile-1", events)
         self.assertIn("delete:profile-1", events)
+        self.assertLess(events.index("driver.quit"), events.index("close:profile-1"))
+        self.assertLess(events.index("close:profile-1"), events.index("delete:profile-1"))
         self.assertFalse(roxy_flow._RETAINED)
 
     def test_close_button_deletes_profile_after_service_restart(self):
