@@ -1,8 +1,10 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 cd /d "%~dp0"
 set "EMAIL_REBIND_PORT=5092"
-set "APP_HOST=127.0.0.1"
+rem Use a fixed clean loopback address; 127.0.0.1 may retain a dead 5092 socket after a forced stop.
+set "EMAIL_REBIND_HOST=127.0.0.3"
+set "APP_HOST=127.0.0.3"
 set "APP_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/"
 set "HEALTH_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/health"
 set "PYTHONW=C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\pythonw.exe"
@@ -11,20 +13,18 @@ if not exist "%PYTHONW%" (
   pause
   exit /b 1
 )
-call :healthcheck
-if not errorlevel 1 goto :open
 
-call :stale_listener
-if errorlevel 1 goto :host_selected
-rem 127.0.0.1:%EMAIL_REBIND_PORT% has a dead listener; use another loopback address on the same port.
-set "APP_HOST=127.0.0.2"
-set "EMAIL_REBIND_HOST=127.0.0.2"
-set "APP_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/"
-set "HEALTH_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/health"
-:host_selected
-set "EMAIL_REBIND_HOST=%APP_HOST%"
-call :listener_is_live
-if errorlevel 1 start "" "%PYTHONW%" "%~dp0app.py"
+echo Stopping existing Email Rebind Console listeners on %APP_HOST%:%EMAIL_REBIND_PORT%...
+call :stop_existing
+if errorlevel 1 (
+  echo Existing listener could not be stopped; see the port owner above.
+  pause
+  endlocal
+  exit /b 1
+)
+
+echo Starting Email Rebind Console on %APP_URL% ...
+start "" "%PYTHONW%" "%~dp0app.py"
 for /l %%i in (1,1,30) do (
   call :healthcheck
   if not errorlevel 1 goto :open
@@ -44,10 +44,6 @@ exit /b 0
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -UseBasicParsing -Uri '%HEALTH_URL%' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
 exit /b %errorlevel%
 
-:stale_listener
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$entries = @(Get-NetTCPConnection -State Listen -LocalAddress '127.0.0.1' -LocalPort %EMAIL_REBIND_PORT% -ErrorAction SilentlyContinue); if ($entries.Count -eq 0) { exit 1 }; foreach ($entry in $entries) { if ($null -eq (Get-Process -Id $entry.OwningProcess -ErrorAction SilentlyContinue)) { exit 0 } }; exit 1" >nul 2>&1
-exit /b %errorlevel%
-
-:listener_is_live
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$entries = @(Get-NetTCPConnection -State Listen -LocalAddress '%APP_HOST%' -LocalPort %EMAIL_REBIND_PORT% -ErrorAction SilentlyContinue); foreach ($entry in $entries) { if ($null -ne (Get-Process -Id $entry.OwningProcess -ErrorAction SilentlyContinue)) { exit 0 } }; exit 1" >nul 2>&1
+:stop_existing
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $port=%EMAIL_REBIND_PORT%; $root=[IO.Path]::GetFullPath('%~dp0'); $ids=@(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique); $ids += @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { ($_.Name -in @('python.exe','pythonw.exe')) -and ($_.CommandLine -like ('*' + $root + 'app.py*')) } | Select-Object -ExpandProperty ProcessId); foreach($id in ($ids | Where-Object { $_ -and ($_ -ne 0) } | Sort-Object -Unique)) { & taskkill.exe /PID ([int]$id) /T /F *> $null; Stop-Process -Id ([int]$id) -Force -ErrorAction SilentlyContinue }; $deadline=(Get-Date).AddSeconds(10); do { $entries=@(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue); $live=@($entries | Where-Object { Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue }); if($live.Count -eq 0) { exit 0 }; foreach($entry in $live) { & taskkill.exe /PID ([int]$entry.OwningProcess) /T /F *> $null; Stop-Process -Id $entry.OwningProcess -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 250 } while((Get-Date) -lt $deadline); $remaining=@(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess); if($remaining.Count -gt 0) { $remaining | ConvertTo-Json -Compress; exit 1 }; exit 0"
 exit /b %errorlevel%

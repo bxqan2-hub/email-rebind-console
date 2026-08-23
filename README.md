@@ -73,10 +73,10 @@ host:port----用户名----密码
 双击 `start.bat`，或运行：
 
 ```powershell
-C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe app.py
+$env:EMAIL_REBIND_HOST='127.0.0.3'; $env:EMAIL_REBIND_PORT='5092'; & 'C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe' app.py
 ```
 
-浏览器打开 <http://127.0.0.1:5092/>。
+浏览器打开 <http://127.0.0.3:5092/>。双击 `start.bat` 会先强制停止 5092 端口上的现有分站进程，再启动并打开该地址。
 
 换绑遵循 ChatGPT 网页流程：登录 → Settings → Account → 点击当前邮箱 → 新邮箱验证 → 退出 → 用新邮箱重新登录并读取 `/api/auth/session` 的新 AT。
 
