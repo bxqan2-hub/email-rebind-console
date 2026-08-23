@@ -733,6 +733,77 @@ def reserve_failed_account_retry(
         return {"task": dict(task), "reason": "reserved"}
 
 
+def reserve_review_login_retry(
+    account_id: int,
+    *,
+    max_transient_retries: int | None = None,
+) -> dict:
+    """为已确认换绑但未取得 AT 的账号建立“只登录新邮箱”任务。"""
+    with _LOCK:
+        accounts = _read(_ACCOUNTS)
+        replacements = _read(_REPLACEMENTS)
+        tasks = _read(_TASKS)
+        account = next(
+            (row for row in accounts if int(row.get("id") or 0) == int(account_id)),
+            None,
+        )
+        if not account:
+            return {"task": None, "reason": "not_found"}
+        if account.get("status") != "review":
+            return {"task": None, "reason": "not_review"}
+        if any(
+            int(row.get("account_id") or 0) == int(account_id)
+            and row.get("status") in {"queued", "running"}
+            for row in tasks
+        ):
+            return {"task": None, "reason": "busy"}
+        previous = next((
+            row for row in sorted(tasks, key=lambda item: int(item.get("id") or 0), reverse=True)
+            if int(row.get("account_id") or 0) == int(account_id)
+            and row.get("stage") == "manual_review"
+        ), None)
+        if not previous:
+            return {"task": None, "reason": "missing_review_task"}
+        replacement = next((
+            row for row in replacements
+            if int(row.get("id") or 0) == int(previous.get("replacement_id") or 0)
+            and row.get("status") == "review"
+        ), None)
+        if not replacement:
+            return {"task": None, "reason": "missing_review_email"}
+        now = _now()
+        attempt = int(previous.get("attempt") or 1) + 1
+        new_email = str(account.get("current_email") or account.get("new_email") or replacement.get("email") or "").strip()
+        task = {
+            "id": _next_id(tasks),
+            "account_id": int(account.get("id") or 0),
+            "replacement_id": int(replacement.get("id") or 0),
+            "old_email": account.get("old_email"),
+            "new_email": new_email,
+            "status": "queued", "stage": "review_login_retry", "attempt": attempt,
+            "login_only": True,
+            "root_task_id": int(previous.get("root_task_id") or previous.get("id") or 0),
+            "retry_of_task_id": int(previous.get("id") or 0),
+            "message": f"第 {attempt} 次尝试：已换绑邮箱重新登录并获取 AT",
+            "created_at": now, "updated_at": now,
+        }
+        if max_transient_retries is not None:
+            task["max_transient_retries"] = max(0, min(int(max_transient_retries), 10))
+        previous["manual_retry_task_id"] = task["id"]
+        previous["updated_at"] = now
+        tasks.append(task)
+        account.update({"status": "queued", "active_task_id": task["id"], "updated_at": now})
+        account.pop("error", None)
+        replacement.update({
+            "status": "reserved", "active_task_id": task["id"],
+            "bound_old_email": account.get("old_email"), "updated_at": now,
+        })
+        _write(_TASKS, tasks)
+        _write(_ACCOUNTS, accounts)
+        _write(_REPLACEMENTS, replacements)
+        return {"task": dict(task), "reason": "reserved"}
+
+
 def finish_replacement_failure(task_id: int, error: str, failure_code: str) -> bool:
     """隔离收不到验证码/已占用的替换邮箱，并释放原账号等待自动轮换。"""
     with _LOCK:
@@ -1102,11 +1173,14 @@ def finish_success(task_id: int, result: dict) -> None:
         })
         account.pop("active_task_id", None)
         account.pop("error", None)
+        account.pop("email_change_uncertain", None)
         replacement.update({
             "status": "used", "used_at": now, "updated_at": now,
             "bound_old_email": task.get("old_email"), "bound_account_id": account.get("id"),
         })
         replacement.pop("active_task_id", None)
+        for key in ("failure_code", "failure_reason", "failed_at"):
+            replacement.pop(key, None)
         _write(_TASKS, tasks)
         _write(_ACCOUNTS, accounts)
         _write(_REPLACEMENTS, replacements)

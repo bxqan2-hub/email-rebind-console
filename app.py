@@ -248,6 +248,35 @@ def create_app(*, recover: bool = True) -> Flask:
             "task": task,
         }), 202
 
+    @app.post("/api/accounts/<int:account_id>/review-login")
+    def api_retry_review_login(account_id: int):
+        """已换绑但待核验的账号只用替换邮箱重新登录并获取 AT。"""
+        if int(store.summary().get("proxy_available") or 0) < 1:
+            return jsonify({"ok": False, "error": "换绑代理池没有可用代理，请先重新启用或导入代理"}), 409
+        data = request.get_json(silent=True) or {}
+        try:
+            transient_retries = max(0, min(int(data.get("transient_retries", settings.MAX_TRANSIENT_RETRIES)), 10))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "自动重试次数必须是 0~10 的整数"}), 400
+        result = store.reserve_review_login_retry(
+            account_id, max_transient_retries=transient_retries,
+        )
+        task = result.get("task")
+        if not task:
+            reason = result.get("reason")
+            if reason == "not_found":
+                return jsonify({"ok": False, "error": "原邮箱账号不存在"}), 404
+            if reason == "not_review":
+                return jsonify({"ok": False, "error": "只有已换绑待核验账号可以重新登录获取 AT"}), 409
+            if reason == "busy":
+                return jsonify({"ok": False, "error": "该账号已有活动补救登录任务"}), 409
+            return jsonify({"ok": False, "error": "未找到已绑定的待核验替换邮箱"}), 409
+        submitted = worker.submit_tasks([task], 1)
+        return jsonify({
+            "ok": True, "submitted": submitted, "transient_retries": transient_retries,
+            "task": task,
+        }), 202
+
     @app.get("/api/tasks")
     def api_tasks():
         return jsonify({"ok": True, "items": store.list_tasks(), "summary": store.summary()})

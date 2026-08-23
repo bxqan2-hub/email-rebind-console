@@ -143,6 +143,26 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertIn("relogin_new_retry", progress_events)
         self.assertIn("profile-1", roxy_flow._RETAINED)
 
+    def test_direct_replacement_login_keeps_new_email_window(self):
+        events = []
+        loaded, _driver, _client_box = self._loaded(events)
+        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
+                patch.object(roxy_flow, "_complete_login", return_value={
+                    "user": {"email": "new@example.com"}, "accessToken": "at-new",
+                }), \
+                patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None), \
+                patch.object(roxy_flow, "_clear_login_state"):
+            result = roxy_flow.perform_replacement_login(
+                new_email="new@example.com", password="", totp_secret="",
+                api_url="https://mail.example/new", proxy_url="http://proxy.example:8000",
+                max_relogin_retries=0,
+            )
+
+        self.assertEqual(result["access_token"], "at-new")
+        self.assertEqual(result["email"], "new@example.com")
+        self.assertEqual(result["roxy_browser_status"], "open")
+        self.assertNotIn("driver.quit", events)
+
     def test_close_button_deletes_profile_after_service_restart(self):
         events = []
         loaded, _driver, _client_box = self._loaded(events)

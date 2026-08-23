@@ -716,6 +716,108 @@ def _login_with_replacement_email(
     raise last_error
 
 
+def perform_replacement_login(
+    *,
+    new_email: str,
+    password: str,
+    totp_secret: str,
+    api_url: str,
+    proxy_url: str,
+    progress: Callable[[str, str], None] | None = None,
+    proxy_verified: Callable[[dict], None] | None = None,
+    max_relogin_retries: int | None = None,
+) -> dict:
+    """已确认换绑后的补救流程：只登录替换邮箱并保留成功窗口。"""
+    progress = progress or (lambda _stage, _message: None)
+    RoxyBrowserClient, build_driver, center_window, fetch_session, safe_get, submit_email, probe_driver_exit = _load_main_roxy()
+    clean_proxy = str(proxy_url or "").strip()
+    if not clean_proxy:
+        raise ProxyFailure("任务没有分配换绑代理，已阻止 Roxy 直连")
+    client = RoxyBrowserClient(profile_proxy=clean_proxy)
+    opened = None
+    driver = None
+    keep_success_open = False
+    try:
+        progress("check_proxy", "检测补救登录代理出口；失败时自动切换下一条")
+        try:
+            opened = client.open_profile(require_proxy_exit_ip=True)
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {str(exc)[:400]}"
+            if any(marker in message.lower() for marker in ("代理出口", "代理格式", "代理协议", "proxy")):
+                raise ProxyFailure(message) from exc
+            raise
+        exit_geo = dict(getattr(opened, "preflight_exit_geo", {}) or {})
+        progress("open_roxy", f"补救登录窗口代理预检通过（出口 {exit_geo.get('ip') or '已确认'}）")
+        driver = build_driver(opened)
+        center_window(driver)
+        driver.set_page_load_timeout(60)
+        driver.set_script_timeout(60)
+        progress("check_proxy", "从补救登录窗口复核实际代理出口")
+        browser_exit_geo = probe_driver_exit(
+            driver, label="换绑后登录", restore_page_load_timeout=60,
+            restore_script_timeout=60, attempts=1, retry_delay=0.5,
+        )
+        if not browser_exit_geo.get("ip"):
+            raise ProxyFailure("补救登录窗口代理出口复核失败")
+        exit_geo = dict(browser_exit_geo)
+        if callable(proxy_verified):
+            proxy_verified(exit_geo)
+        progress("open_roxy", f"补救登录窗口代理检测通过（出口 {exit_geo.get('ip')}）")
+        try:
+            new_session, observed, access_token = _login_with_replacement_email(
+                driver=driver,
+                email=new_email,
+                password=password,
+                totp_secret=totp_secret,
+                fetch_session=fetch_session,
+                safe_get=safe_get,
+                submit_email=submit_email,
+                progress=progress,
+                api_url=api_url,
+                max_relogin_retries=max_relogin_retries,
+            )
+        except RebindOutcomeUnknown:
+            raise
+        except Exception as exc:
+            raise RebindOutcomeUnknown(
+                new_email,
+                f"已换绑邮箱重新登录/AT 刷新失败：{type(exc).__name__}: {str(exc)[:300]}",
+            ) from exc
+        progress("verified", "已换绑邮箱登录和 accessToken 校验完成")
+        _retain_browser(
+            profile_id=opened.profile_id, email=observed,
+            client=client, opened=opened, driver=driver,
+        )
+        keep_success_open = True
+        progress("kept_open", "AT 已获取；补救登录窗口保持替换邮箱登录态")
+        return {
+            "email": observed, "access_token": access_token, "session": new_session,
+            "roxy_profile_id": opened.profile_id, "proxy_exit_geo": exit_geo,
+            "roxy_browser_status": "open",
+        }
+    finally:
+        if opened is not None and not keep_success_open:
+            logger.info(
+                "补救登录未完成，关闭并删除 Roxy 临时环境：profile=%s",
+                getattr(opened, "profile_id", ""),
+            )
+        if driver is not None and not keep_success_open:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+        if opened is not None and not keep_success_open:
+            try:
+                client.close_profile(str(opened.profile_id))
+            except Exception:
+                pass
+            if bool(getattr(opened, "created_by_run", True)):
+                try:
+                    client.delete_profile(str(opened.profile_id))
+                except Exception:
+                    pass
+
+
 def perform_email_rebind(
     *,
     old_email: str,

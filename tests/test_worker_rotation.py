@@ -216,6 +216,31 @@ class WorkerRotationTests(unittest.TestCase):
                 self.assertEqual(kwargs["password"], "")
                 self.assertEqual(kwargs["totp_secret"], "")
 
+    def test_review_login_task_uses_existing_replacement_and_finishes_successfully(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(worker.roxy_flow, "perform_replacement_login", return_value={
+                        "email": "new@example.com", "access_token": "at-new", "roxy_profile_id": "profile-1",
+                    }) as perform:
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                store.import_proxies("http://proxy.example:8080")
+                initial = store.reserve_batch()[0]
+                store.finish_review_failure(initial["id"], "new@example.com", "AT 刷新失败")
+                retry = store.reserve_review_login_retry(1, max_transient_retries=1)["task"]
+
+                worker._run(retry["id"])
+
+                self.assertEqual(store.list_accounts()[0]["status"], "success")
+                self.assertEqual(store.list_replacements()[0]["status"], "used")
+                kwargs = perform.call_args.kwargs
+                self.assertEqual(kwargs["new_email"], "new@example.com")
+                self.assertEqual(kwargs["max_relogin_retries"], 1)
+
     def test_pool_exhaustion_keeps_account_failed_with_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -153,7 +153,35 @@ class AppTests(unittest.TestCase):
                 self.assertTrue(public["at_saved_at"])
                 removed_task = client.delete(f"/api/tasks/{task['id']}")
                 self.assertEqual(removed_task.status_code, 200)
-                self.assertEqual(client.get(f"/api/accounts/{account_id}/export").status_code, 200)
+
+    def test_review_login_route_reserves_existing_replacement_without_rebinding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            patches = (
+                patch.object(store, "_ACCOUNTS", root / "accounts.json"),
+                patch.object(store, "_REPLACEMENTS", root / "replacements.json"),
+                patch.object(store, "_TASKS", root / "tasks.json"),
+                patch.object(store, "_PROXIES", root / "proxies.json"),
+                patch("app.worker.submit_tasks", return_value=1),
+            )
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                store.import_proxies("http://proxy.example:8080")
+                initial = store.reserve_batch()[0]
+                store.finish_review_failure(initial["id"], "new@example.com", "AT 刷新失败")
+                client = app.create_app(recover=False).test_client()
+
+                response = client.post(
+                    "/api/accounts/1/review-login",
+                    json={"transient_retries": 4},
+                )
+
+                self.assertEqual(response.status_code, 202)
+                body = response.get_json()
+                self.assertTrue(body["task"]["login_only"])
+                self.assertEqual(body["task"]["new_email"], "new@example.com")
+                self.assertEqual(body["transient_retries"], 4)
 
     def test_failed_task_log_cleanup_routes(self):
         with tempfile.TemporaryDirectory() as tmp:

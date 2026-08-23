@@ -327,6 +327,28 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(store.list_accounts()[0]["status"], "queued")
                 self.assertEqual(store.list_replacements()[0]["status"], "reserved")
 
+    def test_review_account_can_reserve_login_only_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                initial = store.reserve_batch()[0]
+                store.finish_review_failure(initial["id"], "new@example.com", "AT 刷新失败")
+
+                result = store.reserve_review_login_retry(
+                    1, max_transient_retries=3,
+                )
+
+                self.assertEqual(result["reason"], "reserved")
+                self.assertTrue(result["task"]["login_only"])
+                self.assertEqual(result["task"]["stage"], "review_login_retry")
+                self.assertEqual(result["task"]["max_transient_retries"], 3)
+                self.assertEqual(store.list_accounts()[0]["status"], "queued")
+                self.assertEqual(store.list_replacements()[0]["status"], "reserved")
+
     def test_bad_replacement_is_quarantined_and_next_email_is_reserved(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

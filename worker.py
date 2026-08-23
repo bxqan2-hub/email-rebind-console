@@ -93,15 +93,17 @@ def _run(task_id: int) -> None:
         account = context["account"]
         replacement = context["replacement"]
         attempt = int(task.get("attempt") or 1)
+        login_only = bool(task.get("login_only"))
         retry_limit = max(0, min(
             int(task.get("max_transient_retries", settings.MAX_TRANSIENT_RETRIES) or 0), 10,
         ))
         if active_proxy is None:
             if proxy_attempt >= settings.MAX_PROXY_ATTEMPTS:
-                store.finish_failure(
-                    current_task_id,
-                    f"换绑代理已达到自动切换上限 {settings.MAX_PROXY_ATTEMPTS} 条",
-                )
+                message = f"换绑代理已达到自动切换上限 {settings.MAX_PROXY_ATTEMPTS} 条"
+                if login_only:
+                    store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                else:
+                    store.finish_failure(current_task_id, message)
                 return
             active_proxy = store.pick_random_proxy(excluded_proxy_ids)
             if not active_proxy and allow_proxy_reuse:
@@ -111,10 +113,11 @@ def _run(task_id: int) -> None:
                 active_proxy = store.pick_random_proxy()
             allow_proxy_reuse = False
             if not active_proxy:
-                store.finish_failure(
-                    current_task_id,
-                    "换绑代理池没有可用代理；失败代理已保留原因，请补充或重新启用后重试",
-                )
+                message = "换绑代理池没有可用代理；失败代理已保留原因，请补充或重新启用后重试"
+                if login_only:
+                    store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                else:
+                    store.finish_failure(current_task_id, message)
                 return
             proxy_attempt += 1
             excluded_proxy_ids.add(int(active_proxy.get("id") or 0))
@@ -141,18 +144,30 @@ def _run(task_id: int) -> None:
             )
 
         try:
-            result = roxy_flow.perform_email_rebind(
-                old_email=str(account.get("old_email") or ""),
-                new_email=str(replacement.get("email") or ""),
-                password=str(account.get("password") or ""),
-                totp_secret=str(account.get("totp_secret") or ""),
-                source_api_url=str(account.get("api_url") or ""),
-                api_url=str(replacement.get("api_url") or ""),
-                proxy_url=str(active_proxy.get("proxy_url") or ""),
-                progress=progress,
-                proxy_verified=proxy_verified,
-                max_relogin_retries=retry_limit,
-            )
+            if login_only:
+                result = roxy_flow.perform_replacement_login(
+                    new_email=str(replacement.get("email") or account.get("current_email") or ""),
+                    password=str(account.get("password") or ""),
+                    totp_secret=str(account.get("totp_secret") or ""),
+                    api_url=str(replacement.get("api_url") or ""),
+                    proxy_url=str(active_proxy.get("proxy_url") or ""),
+                    progress=progress,
+                    proxy_verified=proxy_verified,
+                    max_relogin_retries=retry_limit,
+                )
+            else:
+                result = roxy_flow.perform_email_rebind(
+                    old_email=str(account.get("old_email") or ""),
+                    new_email=str(replacement.get("email") or ""),
+                    password=str(account.get("password") or ""),
+                    totp_secret=str(account.get("totp_secret") or ""),
+                    source_api_url=str(account.get("api_url") or ""),
+                    api_url=str(replacement.get("api_url") or ""),
+                    proxy_url=str(active_proxy.get("proxy_url") or ""),
+                    progress=progress,
+                    proxy_verified=proxy_verified,
+                    max_relogin_retries=retry_limit,
+                )
             store.finish_success(current_task_id, result)
             return
         except roxy_flow.ProxyFailure as exc:
@@ -173,6 +188,10 @@ def _run(task_id: int) -> None:
             continue
         except roxy_flow.ReplacementEmailFailure as exc:
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if login_only:
+                logger.error("已换绑账号补救登录失败：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
+                store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                return
             logger.warning("替换邮箱失败，准备自动轮换：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
             rotation = store.rotate_failed_replacement(
                 current_task_id, message, exc.code, settings.MAX_REPLACEMENT_ATTEMPTS,
@@ -188,6 +207,10 @@ def _run(task_id: int) -> None:
             return
         except Exception as exc:  # noqa: BLE001 - 任务终态需持久化完整异常类型
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if login_only:
+                logger.error("已换绑账号补救登录失败：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
+                store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                return
             if _should_auto_retry(task, exc):
                 rotation = store.retry_transient_failure(
                     current_task_id, message, retry_limit,
