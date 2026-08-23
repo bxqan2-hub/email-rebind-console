@@ -153,12 +153,12 @@ class StoreTests(unittest.TestCase):
                 })
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP"],
+                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-new"],
                 )
                 account = store.list_accounts()[0]
                 self.assertEqual(
                     store.export_success_line(account["id"]),
-                    "old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP",
+                    "old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-new",
                 )
                 self.assertEqual(account["roxy_browser_status"], "open")
                 self.assertEqual(account["roxy_profile_id"], "profile-1")
@@ -170,7 +170,7 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(store.list_tasks()[0]["status"], "success")
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP"],
+                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-new"],
                 )
 
                 started = store.begin_access_token_refresh(account["id"])
@@ -179,7 +179,7 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(refreshed["at_refresh_status"], "success")
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP"],
+                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
                 )
                 closed = store.mark_roxy_profile_closed(account["id"])
                 self.assertEqual(closed["roxy_browser_status"], "closed")
@@ -199,7 +199,14 @@ class StoreTests(unittest.TestCase):
 
                 self.assertEqual(
                     store.export_success_lines(),
-                    ["new@example.com----https://mail.example/old----at-new"],
+                    ["old@example.com----new@example.com----https://mail.example/new----at-new"],
+                )
+                account = store.list_accounts()[0]
+                self.assertTrue(account["has_replacement_api"])
+                self.assertTrue(store.delete_replacement(task["replacement_id"])["deleted"])
+                self.assertEqual(
+                    store.export_success_lines(),
+                    ["old@example.com----new@example.com----https://mail.example/new----at-new"],
                 )
 
     def test_failed_task_logs_can_be_cleared_without_removing_success(self):

@@ -61,11 +61,12 @@ def _parts(line: str) -> list[str]:
 def _public_account(row: dict) -> dict:
     return {
         key: value for key, value in row.items()
-        if key not in {"password", "totp_secret", "api_url", "access_token"}
+        if key not in {"password", "totp_secret", "api_url", "replacement_api_url", "access_token"}
     } | {
         "has_password": bool(row.get("password")),
         "has_totp": bool(row.get("totp_secret")),
         "has_api": bool(row.get("api_url")),
+        "has_replacement_api": bool(row.get("replacement_api_url")),
         "has_access_token": bool(row.get("access_token")),
     }
 
@@ -985,6 +986,7 @@ def finish_success(task_id: int, result: dict) -> None:
         })
         account.update({
             "status": "success", "current_email": verified_email, "new_email": verified_email,
+            "replacement_api_url": str(replacement.get("api_url") or "").strip(),
             "access_token": access_token, "rebound_at": now, "at_refreshed_at": now,
             "at_refresh_status": "success", "roxy_profile_id": profile_id,
             "roxy_browser_status": "open", "updated_at": now,
@@ -1061,19 +1063,60 @@ def recover_interrupted_access_token_refreshes() -> int:
         return recovered
 
 
-def _export_success_line(row: dict) -> str | None:
+def _replacement_api_url(row: dict, replacements: list[dict]) -> str:
+    persisted = str(row.get("replacement_api_url") or "").strip()
+    if persisted:
+        return persisted
+    account_id = int(row.get("id") or 0)
+    new_email = str(row.get("new_email") or row.get("current_email") or "").strip().lower()
+    replacement = next((
+        item for item in replacements
+        if int(item.get("bound_account_id") or 0) == account_id
+    ), None)
+    if replacement is None and new_email:
+        replacement = next((
+            item for item in replacements
+            if str(item.get("email") or "").strip().lower() == new_email
+        ), None)
+    return str((replacement or {}).get("api_url") or "").strip()
+
+
+def backfill_success_replacement_api_urls() -> int:
+    """为升级前已成功账号补写替换邮箱 URL，避免号池记录删除后无法导出。"""
+    with _LOCK:
+        accounts = _read(_ACCOUNTS)
+        replacements = _read(_REPLACEMENTS)
+        changed = 0
+        now = _now()
+        for row in accounts:
+            if row.get("status") != "success" or row.get("replacement_api_url"):
+                continue
+            api_url = _replacement_api_url(row, replacements)
+            if not api_url:
+                continue
+            row["replacement_api_url"] = api_url
+            row["updated_at"] = now
+            changed += 1
+        if changed:
+            _write(_ACCOUNTS, accounts)
+        return changed
+
+
+def _export_success_line(row: dict, replacements: list[dict]) -> str | None:
     new_email = str(row.get("new_email") or row.get("current_email") or "").strip()
     access_token = str(row.get("access_token") or "").strip()
     password = str(row.get("password") or "").strip()
     totp_secret = str(row.get("totp_secret") or "").strip()
     old_email = str(row.get("old_email") or "").strip()
     source_api_url = str(row.get("api_url") or "").strip()
-    if not new_email:
+    if not old_email or not new_email or not access_token:
         return None
-    if password and totp_secret and old_email:
-        return "----".join([old_email, new_email, password, totp_secret])
-    if source_api_url and access_token:
-        return "----".join([new_email, source_api_url, access_token])
+    if password and totp_secret:
+        return "----".join([old_email, new_email, password, totp_secret, access_token])
+    if source_api_url:
+        replacement_api_url = _replacement_api_url(row, replacements)
+        if replacement_api_url:
+            return "----".join([old_email, new_email, replacement_api_url, access_token])
     return None
 
 
@@ -1083,11 +1126,12 @@ def export_success_line(account_id: int) -> str | None:
             item for item in _read(_ACCOUNTS)
             if int(item.get("id") or 0) == int(account_id) and item.get("status") == "success"
         ), None)
-        return _export_success_line(row) if row else None
+        return _export_success_line(row, _read(_REPLACEMENTS)) if row else None
 
 
 def export_success_lines() -> list[str]:
     with _LOCK:
         rows = [row for row in _read(_ACCOUNTS) if row.get("status") == "success"]
         rows.sort(key=lambda row: int(row.get("id") or 0))
-        return [line for row in rows if (line := _export_success_line(row))]
+        replacements = _read(_REPLACEMENTS)
+        return [line for row in rows if (line := _export_success_line(row, replacements))]

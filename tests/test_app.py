@@ -106,7 +106,7 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(exported.status_code, 200)
                 self.assertEqual(
                     exported.get_data(as_text=True).strip(),
-                    "old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP",
+                    "old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-new",
                 )
                 self.assertIn("filename*=UTF-8''%E6%8D%A2%E7%BB%91%E5%AE%8C%E6%88%90-", exported.headers["Content-Disposition"])
                 one = client.get(f"/api/accounts/{account_id}/export")
@@ -162,8 +162,9 @@ class AppTests(unittest.TestCase):
         self.assertIn("clearFailedTasks", script)
         self.assertIn("downloadExport", script)
         self.assertIn("document.execCommand('copy')", script)
-        self.assertIn("原邮箱----换绑后邮箱----密码----2FA", html)
-        self.assertIn("换绑后邮箱----取码URL----AT", html)
+        self.assertIn("原邮箱----换绑后邮箱----密码----2FA----AT", html)
+        self.assertIn("原邮箱----换绑后邮箱----替换邮箱URL----AT", html)
+        self.assertIn("复制和 TXT 使用同一格式", html)
         self.assertIn("成功窗口规则", html)
         self.assertIn("不会再进入替换邮箱号池", html)
         self.assertIn("和原邮箱入口完全分开", html)

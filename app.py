@@ -19,6 +19,7 @@ def create_app(*, recover: bool = True) -> Flask:
     if recover:
         store.recover_interrupted_tasks()
         store.recover_interrupted_access_token_refreshes()
+        store.backfill_success_replacement_api_urls()
 
     @app.get("/")
     def index():
