@@ -423,6 +423,31 @@ def list_replacements() -> list[dict]:
         return [_public_replacement(row) for row in sorted(_read(_REPLACEMENTS), key=lambda x: int(x.get("id") or 0))]
 
 
+def delete_source_account(account_id: int) -> dict:
+    """删除未执行换绑的原邮箱账号；活动任务和完成结果保持锁定。"""
+    with _LOCK:
+        rows = _read(_ACCOUNTS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
+        if not row:
+            return {"deleted": False, "reason": "not_found"}
+        active_task = next((
+            task for task in _read(_TASKS)
+            if int(task.get("account_id") or 0) == int(account_id)
+            and task.get("status") in {"queued", "running"}
+        ), None)
+        if row.get("status") in {"queued", "running"} or active_task:
+            return {
+                "deleted": False,
+                "reason": "in_use",
+                "task_id": int((active_task or {}).get("id") or row.get("active_task_id") or 0),
+            }
+        if row.get("status") in {"success", "review"}:
+            return {"deleted": False, "reason": "result_locked"}
+        rows.remove(row)
+        _write(_ACCOUNTS, rows)
+        return {"deleted": True, "item": _public_account(row)}
+
+
 def list_tasks(limit: int = 500) -> list[dict]:
     with _LOCK:
         rows = sorted(_read(_TASKS), key=lambda x: int(x.get("id") or 0), reverse=True)

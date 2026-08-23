@@ -80,6 +80,25 @@ def create_app(*, recover: bool = True) -> Flask:
             **result,
         }), 409
 
+    @app.delete("/api/accounts/<int:account_id>")
+    def api_delete_account(account_id: int):
+        result = store.delete_source_account(account_id)
+        if result.get("deleted"):
+            return jsonify({"ok": True, **result})
+        if result.get("reason") == "not_found":
+            return jsonify({"ok": False, "error": "原邮箱账号不存在", **result}), 404
+        if result.get("reason") == "result_locked":
+            return jsonify({
+                "ok": False,
+                "error": "换绑成功或待核验账号已锁定，避免删除完成结果",
+                **result,
+            }), 409
+        return jsonify({
+            "ok": False,
+            "error": f"原邮箱账号正被任务 #{int(result.get('task_id') or 0)} 使用，请等待任务结束后再删除",
+            **result,
+        }), 409
+
     @app.post("/api/proxies/import")
     def api_import_proxies():
         data = request.get_json(silent=True) or {}

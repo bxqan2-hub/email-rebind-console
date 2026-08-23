@@ -68,6 +68,33 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(store.delete_replacement(replacement_id)["reason"], "not_found")
                 self.assertEqual(store.delete_proxy(proxy_id)["reason"], "not_found")
 
+    def test_delete_original_account_when_idle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                account_id = store.list_accounts()[0]["id"]
+
+                self.assertTrue(store.delete_source_account(account_id)["deleted"])
+                self.assertEqual(store.list_accounts(), [])
+                self.assertEqual(store.delete_source_account(account_id)["reason"], "not_found")
+
+    def test_delete_original_account_is_blocked_during_active_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                task = store.reserve_batch()[0]
+
+                result = store.delete_source_account(task["account_id"])
+                self.assertEqual(result["reason"], "in_use")
+                self.assertEqual(result["task_id"], task["id"])
+                self.assertEqual(len(store.list_accounts()), 1)
+
     def test_delete_replacement_and_proxy_is_blocked_during_active_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

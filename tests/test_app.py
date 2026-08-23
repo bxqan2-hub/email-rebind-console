@@ -43,6 +43,19 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(client.delete(f"/api/replacements/{replacement_id}").status_code, 404)
                 self.assertEqual(client.delete(f"/api/proxies/{proxy_id}").status_code, 404)
 
+    def test_original_account_delete_route(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                account_id = store.list_accounts()[0]["id"]
+                client = app.create_app(recover=False).test_client()
+
+                self.assertEqual(client.delete(f"/api/accounts/{account_id}").status_code, 200)
+                self.assertEqual(store.list_accounts(), [])
+                self.assertEqual(client.delete(f"/api/accounts/{account_id}").status_code, 404)
+
     def test_active_task_pool_items_cannot_be_deleted_by_route(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -122,6 +135,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("导入原邮箱账号", html)
         self.assertIn("data-delete-replacement", script)
         self.assertIn("data-delete-proxy", script)
+        self.assertIn("data-delete-account", script)
         self.assertIn("btn danger", script)
 
     def test_success_account_can_refresh_at_and_close_roxy(self):
