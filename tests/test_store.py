@@ -177,6 +177,15 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(started["at_refresh_status"], "running")
                 refreshed = store.finish_access_token_refresh(account["id"], {"access_token": "at-plus"})
                 self.assertEqual(refreshed["at_refresh_status"], "success")
+                self.assertTrue(refreshed["at_token_changed"])
+                self.assertEqual(
+                    store.export_success_lines(),
+                    ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
+                )
+                restarted = store.begin_access_token_refresh(account["id"])
+                self.assertNotIn("at_token_changed", restarted)
+                unchanged = store.finish_access_token_refresh(account["id"], {"access_token": "at-plus"})
+                self.assertFalse(unchanged["at_token_changed"])
                 self.assertEqual(
                     store.export_success_lines(),
                     ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],

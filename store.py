@@ -893,6 +893,7 @@ def begin_access_token_refresh(account_id: int) -> dict | None:
             "updated_at": now,
         })
         row.pop("at_refresh_error", None)
+        row.pop("at_token_changed", None)
         _write(_ACCOUNTS, rows)
         return dict(row)
 
@@ -906,9 +907,11 @@ def finish_access_token_refresh(account_id: int, result: dict) -> dict | None:
         access_token = str(result.get("access_token") or "").strip()
         if not access_token:
             raise ValueError("重新获取结果缺少 access_token")
+        token_changed = access_token != str(row.get("access_token") or "").strip()
         now = _now()
         row.update({
             "access_token": access_token, "at_refresh_status": "success",
+            "at_token_changed": token_changed,
             "at_refreshed_at": now, "roxy_browser_status": "open",
             "updated_at": now,
         })
