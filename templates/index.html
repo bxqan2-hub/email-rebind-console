@@ -70,7 +70,7 @@
     </section>
 
     <section class="view hidden" id="view-tasks">
-      <article class="card"><div class="card-head"><div><h2>换绑任务记录</h2><p>每个阶段、随机代理及切换次数均持久化；失败任务可重新提交，也可单条或批量清理失败日志。</p></div><div class="actions"><button class="btn danger" id="clearFailedTasks">清理全部失败</button><button class="btn ghost" id="refreshTasks">刷新</button></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>原邮箱 → 新邮箱</th><th>换绑代理</th><th>状态</th><th>当前阶段</th><th>说明</th><th>完成时间</th><th>操作</th></tr></thead><tbody id="taskBody"></tbody></table></div></article>
+      <article class="card"><div class="card-head"><div><h2>换绑任务记录</h2><p>成功、失败和待核验记录均可单条清理，也可批量清理全部已结束记录；活动任务保持锁定。</p></div><div class="actions"><button class="btn danger" id="clearFinishedTasks">清理全部已结束</button><button class="btn ghost" id="refreshTasks">刷新</button></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>原邮箱 → 新邮箱</th><th>换绑代理</th><th>状态</th><th>当前阶段</th><th>说明</th><th>完成时间</th><th>操作</th></tr></thead><tbody id="taskBody"></tbody></table></div></article>
     </section>
   </main>
   <div id="toast"></div>

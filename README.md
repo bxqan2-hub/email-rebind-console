@@ -108,6 +108,8 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 - “重新获取 AT”：复用同一成功窗口读取最新 `/api/auth/session`；窗口曾手动关闭时，
   会重开同一 Roxy Profile，登录资料仍然保留。适合充值 Plus 后刷新 AT。
 - “关闭窗口”：只关闭 Roxy 窗口并保留 Profile；以后仍可点击“重新获取 AT”重开。
+- “清理账号”：成功账号关闭 Roxy 窗口后可删除；保存的 AT 和该账号导出结果随账号一起清理。
+- “清理记录”：成功、失败和待核验任务都支持单条或批量清理，活动任务不会被删除。
 
 完成账号表会显示 Profile ID、窗口状态、AT 更新时间和失败原因。重新获取成功后，
 页面会自动刷新并明确显示“AT 已更新”或“AT 未变化”；获取到的 AT 会原子保存并回读校验，

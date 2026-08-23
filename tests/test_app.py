@@ -124,6 +124,9 @@ class AppTests(unittest.TestCase):
                 public = client.get("/api/state").get_json()["accounts"][0]
                 self.assertTrue(public["at_saved"])
                 self.assertTrue(public["at_saved_at"])
+                removed_task = client.delete(f"/api/tasks/{task['id']}")
+                self.assertEqual(removed_task.status_code, 200)
+                self.assertEqual(client.get(f"/api/accounts/{account_id}/export").status_code, 200)
 
     def test_failed_task_log_cleanup_routes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -175,8 +178,10 @@ class AppTests(unittest.TestCase):
         self.assertIn("data-close-roxy", script)
         self.assertIn("data-copy-export", script)
         self.assertIn("data-download-export", script)
-        self.assertIn("data-delete-failed-task", script)
-        self.assertIn("clearFailedTasks", script)
+        self.assertIn("data-delete-finished-task", script)
+        self.assertIn("data-delete-success-account", script)
+        self.assertIn("clearFinishedTasks", script)
+        self.assertIn("清理全部已结束", html)
         self.assertIn("downloadExport", script)
         self.assertIn("document.execCommand('copy')", script)
         self.assertIn("原邮箱----换绑后邮箱----密码----2FA----AT", html)
@@ -243,12 +248,45 @@ class AppTests(unittest.TestCase):
                     refresh = client.post(f"/api/accounts/{account_id}/refresh-at")
                 self.assertEqual(refresh.status_code, 202)
                 self.assertTrue(refresh.get_json()["accepted"])
+                self.assertEqual(client.delete(f"/api/accounts/{account_id}").status_code, 409)
 
                 with patch("app.roxy_flow.close_retained_profile", return_value=True) as close:
                     response = client.post(f"/api/accounts/{account_id}/close-roxy")
                 self.assertEqual(response.status_code, 200)
                 close.assert_called_once_with("profile-1")
                 self.assertEqual(response.get_json()["item"]["roxy_browser_status"], "closed")
+                cleaned = client.delete(f"/api/accounts/{account_id}")
+                self.assertEqual(cleaned.status_code, 200)
+                self.assertEqual(store.list_accounts(), [])
+
+    def test_bulk_cleanup_removes_success_and_failed_logs_but_keeps_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"):
+                store.import_source_accounts(
+                    "first@example.com----Password!----JBSWY3DPEHPK3PXP\n"
+                    "second@example.com----Password!----JBSWY3DPEHPK3PXP"
+                )
+                store.import_replacement_emails(
+                    "new1@example.com----https://mail.example/1\n"
+                    "new2@example.com----https://mail.example/2"
+                )
+                tasks = store.reserve_batch()
+                store.finish_failure(tasks[0]["id"], "failed")
+                store.finish_success(tasks[1]["id"], {
+                    "email": "new2@example.com", "access_token": "at-2",
+                })
+                client = app.create_app(recover=False).test_client()
+
+                response = client.delete("/api/tasks/finished")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["deleted"], 2)
+                self.assertEqual(store.list_tasks(), [])
+                self.assertEqual(len(store.export_success_lines()), 1)
 
 
 if __name__ == "__main__":

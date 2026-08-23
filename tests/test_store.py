@@ -197,9 +197,13 @@ class StoreTests(unittest.TestCase):
                     store.export_success_lines(),
                     ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
                 )
+                self.assertEqual(store.delete_source_account(account["id"])["reason"], "window_open")
                 closed = store.mark_roxy_profile_closed(account["id"])
                 self.assertEqual(closed["roxy_browser_status"], "closed")
                 self.assertEqual(store.summary()["roxy_open"], 0)
+                removed_account = store.delete_source_account(account["id"])
+                self.assertTrue(removed_account["deleted"])
+                self.assertEqual(store.export_success_lines(), [])
 
     def test_email_api_source_is_exported_with_original_email_and_url(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -245,7 +249,43 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual([row["id"] for row in store.list_tasks()], [tasks[1]["id"]])
                 self.assertEqual(store.summary()["tasks_failed"], 0)
 
+                removed_success = store.delete_finished_task(tasks[1]["id"])
+                self.assertTrue(removed_success["deleted"])
+                self.assertEqual(store.list_tasks(), [])
+                self.assertEqual(len(store.export_success_lines()), 1)
+
                 self.assertEqual(store.clear_failed_tasks(), {"deleted": 0, "task_ids": []})
+                self.assertEqual(store.clear_finished_tasks(), {"deleted": 0, "task_ids": []})
+
+    def test_clear_finished_tasks_preserves_active_tasks_and_success_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"):
+                store.import_source_accounts(
+                    "first@example.com----Password!----JBSWY3DPEHPK3PXP\n"
+                    "second@example.com----Password!----JBSWY3DPEHPK3PXP\n"
+                    "third@example.com----Password!----JBSWY3DPEHPK3PXP"
+                )
+                store.import_replacement_emails(
+                    "new1@example.com----https://mail.example/1\n"
+                    "new2@example.com----https://mail.example/2\n"
+                    "new3@example.com----https://mail.example/3"
+                )
+                tasks = store.reserve_batch()
+                store.finish_failure(tasks[0]["id"], "failed")
+                store.finish_success(tasks[1]["id"], {
+                    "email": "new2@example.com", "access_token": "at-2",
+                })
+
+                result = store.clear_finished_tasks()
+
+                self.assertEqual(result["deleted"], 2)
+                self.assertEqual(result["task_ids"], sorted([tasks[0]["id"], tasks[1]["id"]]))
+                self.assertEqual([row["id"] for row in store.list_tasks()], [tasks[2]["id"]])
+                self.assertEqual(len(store.export_success_lines()), 1)
 
     def test_failure_releases_replacement(self):
         with tempfile.TemporaryDirectory() as tmp:

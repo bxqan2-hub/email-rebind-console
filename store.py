@@ -428,7 +428,7 @@ def list_replacements() -> list[dict]:
 
 
 def delete_source_account(account_id: int) -> dict:
-    """删除未执行换绑的原邮箱账号；活动任务和完成结果保持锁定。"""
+    """删除空闲的原邮箱账号；成功账号需先关闭保留窗口。"""
     with _LOCK:
         rows = _read(_ACCOUNTS)
         row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
@@ -445,7 +445,9 @@ def delete_source_account(account_id: int) -> dict:
                 "reason": "in_use",
                 "task_id": int((active_task or {}).get("id") or row.get("active_task_id") or 0),
             }
-        if row.get("status") in {"success", "review"}:
+        if row.get("status") == "success" and row.get("roxy_browser_status") != "closed":
+            return {"deleted": False, "reason": "window_open"}
+        if row.get("status") == "review":
             return {"deleted": False, "reason": "result_locked"}
         rows.remove(row)
         _write(_ACCOUNTS, rows)
@@ -459,7 +461,7 @@ def list_tasks(limit: int = 500) -> list[dict]:
 
 
 def _remove_task_links(rows: list[dict], removed_ids: set[int]) -> None:
-    """删除失败日志后，清掉剩余任务中指向已删除日志的追踪字段。"""
+    """删除已结束日志后，清掉剩余任务中指向已删除日志的追踪字段。"""
     for row in rows:
         for key in ("retry_of_task_id", "root_task_id", "manual_retry_task_id", "next_task_id"):
             if int(row.get(key) or 0) in removed_ids:
@@ -481,6 +483,21 @@ def delete_failed_task(task_id: int) -> dict:
         return {"deleted": True, "item": dict(row)}
 
 
+def delete_finished_task(task_id: int) -> dict:
+    """清理单条已结束任务日志，保留账号、邮箱池和导出结果。"""
+    with _LOCK:
+        rows = _read(_TASKS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(task_id)), None)
+        if not row:
+            return {"deleted": False, "reason": "not_found"}
+        if row.get("status") not in {"success", "failed", "review"}:
+            return {"deleted": False, "reason": "not_finished"}
+        rows.remove(row)
+        _remove_task_links(rows, {int(task_id)})
+        _write(_TASKS, rows)
+        return {"deleted": True, "item": dict(row)}
+
+
 def clear_failed_tasks() -> dict:
     """批量清理全部失败任务日志，保留进行中和成功记录。"""
     with _LOCK:
@@ -488,6 +505,20 @@ def clear_failed_tasks() -> dict:
         removed = [row for row in rows if row.get("status") == "failed"]
         removed_ids = {int(row.get("id") or 0) for row in removed}
         kept = [row for row in rows if row.get("status") != "failed"]
+        if removed_ids:
+            _remove_task_links(kept, removed_ids)
+            _write(_TASKS, kept)
+        return {"deleted": len(removed), "task_ids": sorted(removed_ids)}
+
+
+def clear_finished_tasks() -> dict:
+    """批量清理成功、失败和待核验任务日志，活动任务保持锁定。"""
+    with _LOCK:
+        rows = _read(_TASKS)
+        finished = {"success", "failed", "review"}
+        removed = [row for row in rows if row.get("status") in finished]
+        removed_ids = {int(row.get("id") or 0) for row in removed}
+        kept = [row for row in rows if row.get("status") not in finished]
         if removed_ids:
             _remove_task_links(kept, removed_ids)
             _write(_TASKS, kept)

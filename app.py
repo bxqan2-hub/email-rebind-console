@@ -92,7 +92,13 @@ def create_app(*, recover: bool = True) -> Flask:
         if result.get("reason") == "result_locked":
             return jsonify({
                 "ok": False,
-                "error": "换绑成功或待核验账号已锁定，避免删除完成结果",
+                "error": "待核验账号已锁定，请确认实际换绑状态后再处理",
+                **result,
+            }), 409
+        if result.get("reason") == "window_open":
+            return jsonify({
+                "ok": False,
+                "error": "请先关闭成功账号的 Roxy 窗口，再清理完成账号",
                 **result,
             }), 409
         return jsonify({
@@ -216,14 +222,19 @@ def create_app(*, recover: bool = True) -> Flask:
         result = store.clear_failed_tasks()
         return jsonify({"ok": True, **result})
 
+    @app.delete("/api/tasks/finished")
+    def api_clear_finished_tasks():
+        result = store.clear_finished_tasks()
+        return jsonify({"ok": True, **result})
+
     @app.delete("/api/tasks/<int:task_id>")
-    def api_delete_failed_task(task_id: int):
-        result = store.delete_failed_task(task_id)
+    def api_delete_finished_task(task_id: int):
+        result = store.delete_finished_task(task_id)
         if result.get("deleted"):
             return jsonify({"ok": True, **result})
         if result.get("reason") == "not_found":
             return jsonify({"ok": False, "error": "任务日志不存在", **result}), 404
-        return jsonify({"ok": False, "error": "只能清理已失败的任务日志", **result}), 409
+        return jsonify({"ok": False, "error": "只能清理已结束的成功、失败或待核验任务日志", **result}), 409
 
     def export_response(lines: list[str], *, account_id: int | None = None) -> Response:
         body = "\n".join(lines) + ("\n" if lines else "")
