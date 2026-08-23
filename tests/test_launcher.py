@@ -10,10 +10,16 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
         text = raw.decode("ascii")
         self.assertIn('cd /d "%~dp0"', text)
+        self.assertIn('set "EMAIL_REBIND_PORT=5092"', text)
         self.assertIn('pythonw.exe', text)
-        self.assertIn('findstr ":5091"', text)
+        self.assertIn('findstr ":5092"', text)
         self.assertIn('if errorlevel 1 start "" "%PYTHONW%"', text)
-        self.assertIn('start "" "http://127.0.0.1:5091/"', text)
+        self.assertIn('start "" "http://127.0.0.1:5092/"', text)
+
+    def test_stop_bat_targets_the_same_port(self):
+        text = Path("stop.bat").read_text(encoding="utf-8")
+        self.assertIn('findstr ":5092"', text)
+        self.assertNotIn(":5091", text)
 
     def test_normal_polling_requests_are_not_logged_to_console(self):
         source = Path("app.py").read_text(encoding="utf-8")
