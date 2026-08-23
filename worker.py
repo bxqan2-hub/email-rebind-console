@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import roxy_flow
@@ -13,6 +14,32 @@ logger = logging.getLogger(__name__)
 _LOCK = threading.RLock()
 _EXECUTORS: list[ThreadPoolExecutor] = []
 _ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-action")
+
+
+_TRANSIENT_STAGES = {
+    "queued", "running", "open_roxy", "check_proxy", "login_old", "login_password", "login_totp",
+    "login_email_otp", "submit_login_email_otp", "check_email_eligibility",
+    "open_settings", "submit_new_email",
+}
+_NON_RETRYABLE_MARKERS = (
+    "不符合自助换绑条件", "社交登录账号", "需要密码", "没有 mfa", "没有对应的 api",
+    "频率或次数限制", "频率限制", "次数限制", "被拒绝", "rate limit",
+)
+
+
+def _should_auto_retry(task: dict, exc: Exception) -> bool:
+    """仅重试服务端/浏览器临时故障，绝不跨过验证码已提交的未知结果。"""
+    if isinstance(exc, (roxy_flow.ProxyFailure, roxy_flow.ReplacementEmailFailure, roxy_flow.RebindOutcomeUnknown)):
+        return False
+    message = str(exc or "").strip().lower()
+    if any(marker.lower() in message for marker in _NON_RETRYABLE_MARKERS):
+        return False
+    stage = str(task.get("stage") or "").strip()
+    if stage == "submit_new_email_otp":
+        return any(marker in message for marker in ("未取得服务端响应", "可使用失败重试", "http 401", "http 422", "http 400", "http 409"))
+    if stage in {"changed", "relogin_new", "verified", "kept_open", "manual_review", "wait_new_email_otp"}:
+        return False
+    return isinstance(exc, TimeoutError) or stage in _TRANSIENT_STAGES
 
 
 def _refresh_access_token(account_id: int) -> None:
@@ -56,6 +83,7 @@ def _run(task_id: int) -> None:
     active_proxy: dict | None = None
     excluded_proxy_ids: set[int] = set()
     proxy_attempt = 0
+    allow_proxy_reuse = False
     while True:
         context = store.get_task_context(current_task_id)
         if not context:
@@ -73,6 +101,12 @@ def _run(task_id: int) -> None:
                 )
                 return
             active_proxy = store.pick_random_proxy(excluded_proxy_ids)
+            if not active_proxy and allow_proxy_reuse:
+                # 临时故障重试优先换未用代理；只有代理池本身没有第二条时，
+                # 才允许复用当前代理，避免单代理配置直接失去自动重试机会。
+                excluded_proxy_ids.clear()
+                active_proxy = store.pick_random_proxy()
+            allow_proxy_reuse = False
             if not active_proxy:
                 store.finish_failure(
                     current_task_id,
@@ -146,8 +180,30 @@ def _run(task_id: int) -> None:
             store.finish_review_failure(current_task_id, exc.new_email, message)
             return
         except Exception as exc:  # noqa: BLE001 - 任务终态需持久化完整异常类型
+            message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if _should_auto_retry(task, exc):
+                rotation = store.retry_transient_failure(
+                    current_task_id, message, settings.MAX_TRANSIENT_RETRIES,
+                )
+                next_task = rotation.get("next_task")
+                if next_task:
+                    logger.warning(
+                        "换绑任务 #%s 遇到临时故障，自动重试第 %s 次：%s",
+                        current_task_id, next_task.get("attempt"), message,
+                    )
+                    active_proxy = None
+                    allow_proxy_reuse = True
+                    current_task_id = int(next_task["id"])
+                    if settings.TRANSIENT_RETRY_DELAY:
+                        time.sleep(settings.TRANSIENT_RETRY_DELAY)
+                    continue
+                if rotation.get("reason") == "attempt_limit":
+                    logger.error(
+                        "换绑任务 #%s 临时故障重试耗尽：%s", current_task_id, message,
+                    )
+                    return
             logger.exception("换绑任务 #%s 失败", current_task_id)
-            store.finish_failure(current_task_id, f"{type(exc).__name__}: {str(exc)[:500]}")
+            store.finish_failure(current_task_id, message)
             return
 
 

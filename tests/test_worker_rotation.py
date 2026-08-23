@@ -2,7 +2,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import roxy_flow
 import store
@@ -10,6 +10,70 @@ import worker
 
 
 class WorkerRotationTests(unittest.TestCase):
+    def test_transient_failure_retries_same_replacement_automatically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_random = Mock()
+            fake_random.choice.side_effect = lambda rows: rows[0]
+            seen: list[str] = []
+
+            def perform(**kwargs):
+                seen.append(kwargs["proxy_url"])
+                if len(seen) == 1:
+                    kwargs["progress"]("submit_new_email", "提交替换邮箱并请求新邮箱验证码")
+                    raise RuntimeError("提交替换邮箱后未取得服务端响应，可使用失败重试")
+                return {"email": kwargs["new_email"], "access_token": "at-new"}
+
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(store, "_PROXY_RANDOM", fake_random), \
+                    patch.object(worker.settings, "MAX_TRANSIENT_RETRIES", 1), \
+                    patch.object(worker.settings, "TRANSIENT_RETRY_DELAY", 0), \
+                    patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
+                    patch.object(worker.roxy_flow, "perform_email_rebind", side_effect=perform) as run:
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies("http://first.example:8080\nhttp://second.example:8080")
+                initial = store.reserve_batch()[0]
+                worker._run(initial["id"])
+
+                self.assertEqual(run.call_count, 2)
+                self.assertNotEqual(seen[0], seen[1])
+                self.assertEqual(store.list_accounts()[0]["status"], "success")
+                self.assertEqual(store.list_replacements()[0]["status"], "used")
+                tasks = sorted(store.list_tasks(), key=lambda row: int(row["id"]))
+                self.assertEqual(tasks[0]["stage"], "transient_failed")
+                self.assertEqual(tasks[0]["auto_retry_status"], "scheduled")
+                self.assertEqual(tasks[1]["stage"], "kept_open")
+                self.assertEqual(tasks[1]["retry_of_task_id"], tasks[0]["id"])
+                self.assertEqual(tasks[1]["attempt"], 2)
+
+    def test_transient_retries_are_bounded_and_release_replacement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_random = Mock()
+            fake_random.choice.side_effect = lambda rows: rows[0]
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(store, "_PROXY_RANDOM", fake_random), \
+                    patch.object(worker.settings, "MAX_TRANSIENT_RETRIES", 1), \
+                    patch.object(worker.settings, "TRANSIENT_RETRY_DELAY", 0), \
+                    patch.object(worker.roxy_flow, "perform_email_rebind", side_effect=TimeoutError("账号登录超时")) as run:
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies("http://first.example:8080\nhttp://second.example:8080")
+                worker._run(store.reserve_batch()[0]["id"])
+
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(store.list_accounts()[0]["status"], "failed")
+                self.assertEqual(store.list_replacements()[0]["status"], "available")
+                final_task = sorted(store.list_tasks(), key=lambda row: int(row["id"]))[-1]
+                self.assertEqual(final_task["auto_retry_status"], "exhausted")
+
     def test_otp_failure_marks_email_and_automatically_uses_next_one(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

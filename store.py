@@ -1092,6 +1092,80 @@ def finish_failure(task_id: int, error: str) -> None:
         _write(_REPLACEMENTS, replacements)
 
 
+def retry_transient_failure(task_id: int, error: str, max_retries: int) -> dict:
+    """安全地重试流程早期临时故障，复用同一替换邮箱并建立任务链。"""
+    with _LOCK:
+        tasks = _read(_TASKS)
+        accounts = _read(_ACCOUNTS)
+        replacements = _read(_REPLACEMENTS)
+        previous = next((row for row in tasks if int(row.get("id") or 0) == int(task_id)), None)
+        if not previous:
+            return {"next_task": None, "reason": "missing_task"}
+        account = next((
+            row for row in accounts
+            if int(row.get("id") or 0) == int(previous.get("account_id") or 0)
+        ), None)
+        replacement = next((
+            row for row in replacements
+            if int(row.get("id") or 0) == int(previous.get("replacement_id") or 0)
+        ), None)
+        if not account or not replacement:
+            return {"next_task": None, "reason": "missing_context"}
+
+        now = _now()
+        clean_error = str(error or "临时故障")[:600]
+        retry_count = int(previous.get("transient_retry_count") or 0)
+        limit = max(0, int(max_retries or 0))
+        if retry_count >= limit:
+            previous.update({
+                "status": "failed", "stage": "failed", "message": clean_error,
+                "error": clean_error, "retryable": True,
+                "auto_retry_status": "exhausted", "completed_at": now, "updated_at": now,
+            })
+            account.update({"status": "failed", "error": clean_error, "updated_at": now})
+            account.pop("active_task_id", None)
+            replacement.update({"status": "available", "error": clean_error, "updated_at": now})
+            replacement.pop("active_task_id", None)
+            replacement.pop("bound_old_email", None)
+            _write(_TASKS, tasks)
+            _write(_ACCOUNTS, accounts)
+            _write(_REPLACEMENTS, replacements)
+            return {"next_task": None, "reason": "attempt_limit", "message": clean_error}
+
+        next_attempt = int(previous.get("attempt") or 1) + 1
+        next_count = retry_count + 1
+        next_task = {
+            "id": _next_id(tasks),
+            "account_id": int(account.get("id") or 0),
+            "replacement_id": int(replacement.get("id") or 0),
+            "old_email": account.get("old_email"),
+            "new_email": replacement.get("email"),
+            "status": "queued", "stage": "auto_retry", "attempt": next_attempt,
+            "root_task_id": int(previous.get("root_task_id") or previous.get("id") or 0),
+            "retry_of_task_id": int(previous.get("id") or 0),
+            "transient_retry_count": next_count,
+            "message": f"第 {next_attempt} 次尝试：临时故障自动重试，继续使用当前替换邮箱",
+            "created_at": now, "updated_at": now,
+        }
+        previous.update({
+            "status": "failed", "stage": "transient_failed", "message": clean_error,
+            "error": clean_error, "retryable": True, "auto_retry_status": "scheduled",
+            "next_task_id": next_task["id"], "completed_at": now, "updated_at": now,
+        })
+        account.update({"status": "queued", "active_task_id": next_task["id"], "updated_at": now})
+        account.pop("error", None)
+        replacement.update({
+            "status": "reserved", "active_task_id": next_task["id"],
+            "bound_old_email": account.get("old_email"), "updated_at": now,
+        })
+        replacement.pop("error", None)
+        tasks.append(next_task)
+        _write(_TASKS, tasks)
+        _write(_ACCOUNTS, accounts)
+        _write(_REPLACEMENTS, replacements)
+        return {"next_task": dict(next_task), "reason": "scheduled"}
+
+
 def recover_interrupted_tasks() -> int:
     active = [row for row in _read(_TASKS) if row.get("status") in {"queued", "running"}]
     uncertain_stages = {"submit_new_email_otp", "changed", "relogin_new", "verified", "kept_open"}

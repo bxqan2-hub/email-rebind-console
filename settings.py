@@ -23,3 +23,7 @@ OTP_POLL_INTERVAL = max(1.0, float(os.getenv("EMAIL_REBIND_OTP_POLL_INTERVAL", "
 MAIL_VERIFY_TLS = os.getenv("EMAIL_REBIND_MAIL_VERIFY_TLS", "1").strip().lower() not in {"0", "false", "no"}
 MAX_REPLACEMENT_ATTEMPTS = max(1, min(int(os.getenv("EMAIL_REBIND_MAX_REPLACEMENT_ATTEMPTS", "5")), 50))
 MAX_PROXY_ATTEMPTS = max(1, min(int(os.getenv("EMAIL_REBIND_MAX_PROXY_ATTEMPTS", "5")), 50))
+# 网络、登录页加载、Roxy/ChatGPT 临时响应失败时，保持同一原邮箱和替换邮箱
+# 自动重新执行完整流程；验证码已提交或服务端已确认后的不确定结果不会走这里。
+MAX_TRANSIENT_RETRIES = max(0, min(int(os.getenv("EMAIL_REBIND_MAX_TRANSIENT_RETRIES", "2")), 10))
+TRANSIENT_RETRY_DELAY = max(0.0, min(float(os.getenv("EMAIL_REBIND_TRANSIENT_RETRY_DELAY", "2")), 30.0))
