@@ -17,7 +17,7 @@ def _session(account_id="account-test"):
     return {"accessToken": f"header.{encoded}.signature"}
 
 
-class ProtocolEmailChangeTests(unittest.TestCase):
+class HarGuidedEmailChangeTests(unittest.TestCase):
     def test_capture_content_lengths_match_new_email_and_code_payloads(self):
         # 脱敏构造一个与抓包邮箱长度相同的值，验证 53/69 字节请求体结构。
         email = "a" * 29 + "@example.com"
@@ -43,8 +43,8 @@ class ProtocolEmailChangeTests(unittest.TestCase):
         self.assertNotIn("authorization", args[0].lower())
         self.assertEqual(result["status"], 200)
 
-    def test_protocol_uses_eligibility_begin_verify_without_settings(self):
-        driver = Mock(current_url="https://chatgpt.com/")
+    def test_har_api_uses_eligibility_begin_verify_and_logout_sequence(self):
+        driver = Mock(current_url="https://chatgpt.com/#settings/Account")
         progress = Mock()
         responses = [
             {"ok": True, "status": 200, "data": {"eligible": True, "eligibility_type": "password"}},
@@ -54,7 +54,7 @@ class ProtocolEmailChangeTests(unittest.TestCase):
         with patch.object(roxy_flow, "_browser_json_request", side_effect=responses) as request, \
                 patch.object(roxy_flow.mail_api, "read_current_otp", return_value="111111"), \
                 patch.object(roxy_flow.mail_api, "wait_for_new_otp", return_value="222222") as wait:
-            roxy_flow._change_email_via_protocol(
+            roxy_flow._change_email_via_har_api(
                 driver,
                 session=_session(),
                 new_email="new@example.com",
@@ -77,26 +77,8 @@ class ProtocolEmailChangeTests(unittest.TestCase):
             ),
         ])
         wait.assert_called_once()
-        progress.assert_any_call("protocol_eligibility", "登录成功；通过协议检查邮箱换绑资格")
-        progress.assert_any_call("protocol_begin", "通过协议提交替换邮箱并请求验证码")
-        progress.assert_any_call("protocol_verify", "通过协议提交替换邮箱验证码")
-        progress.assert_any_call("changed", "协议已确认邮箱更新；准备清理旧登录态")
-        driver.execute_script.assert_not_called()
-
-    def test_protocol_route_unavailable_never_falls_back_to_settings(self):
-        driver = Mock(current_url="https://chatgpt.com/")
-        responses = [
-            {"ok": True, "status": 200, "data": {"eligible": True, "eligibility_type": "password"}},
-            {"ok": True, "status": 404, "data": {}},
-        ]
-        with patch.object(roxy_flow, "_browser_json_request", side_effect=responses), \
-                patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None):
-            with self.assertRaisesRegex(roxy_flow.ProtocolChangeFailure, "开始接口不可用"):
-                roxy_flow._change_email_via_protocol(
-                    driver, session=_session(), new_email="new@example.com",
-                    api_url="https://mail.example/new", progress=Mock(),
-                )
-        driver.execute_script.assert_not_called()
+        progress.assert_any_call("changed", "服务端已确认邮箱更新；退出旧登录态")
+        driver.execute_script.assert_called_once_with("window.location.assign('/auth/logout')")
 
     def test_social_password_payload_preserves_remove_social_subs(self):
         session = _session()
@@ -108,7 +90,7 @@ class ProtocolEmailChangeTests(unittest.TestCase):
         with patch.object(roxy_flow, "_browser_json_request", side_effect=responses) as request, \
                 patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None), \
                 patch.object(roxy_flow.mail_api, "wait_for_new_otp", return_value="222222"):
-            roxy_flow._change_email_via_protocol(
+            roxy_flow._change_email_via_har_api(
                 Mock(), session=session, new_email="new@example.com",
                 api_url="https://mail.example/new", progress=Mock(),
             )
@@ -126,7 +108,7 @@ class ProtocolEmailChangeTests(unittest.TestCase):
             "data": {"eligible": True, "eligibility_type": "social"},
         }) as request:
             with self.assertRaisesRegex(RuntimeError, "Security 中设置密码"):
-                roxy_flow._change_email_via_protocol(
+                roxy_flow._change_email_via_har_api(
                     Mock(), session=_session(), new_email="new@example.com",
                     api_url="https://mail.example/new", progress=Mock(),
                 )
@@ -138,7 +120,7 @@ class ProtocolEmailChangeTests(unittest.TestCase):
             "ok": True, "status": 200, "data": {"eligible": False},
         }) as request:
             with self.assertRaisesRegex(RuntimeError, "不符合自助换绑条件"):
-                roxy_flow._change_email_via_protocol(
+                roxy_flow._change_email_via_har_api(
                     driver,
                     session=_session(),
                     new_email="new@example.com",
@@ -158,7 +140,7 @@ class ProtocolEmailChangeTests(unittest.TestCase):
                 patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None), \
                 patch.object(roxy_flow.mail_api, "wait_for_new_otp", return_value="222222"):
             with self.assertRaises(roxy_flow.RebindOutcomeUnknown):
-                roxy_flow._change_email_via_protocol(
+                roxy_flow._change_email_via_har_api(
                     driver,
                     session=_session(),
                     new_email="new@example.com",
@@ -176,7 +158,7 @@ class ProtocolEmailChangeTests(unittest.TestCase):
                 patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None), \
                 patch.object(roxy_flow.mail_api, "wait_for_new_otp", return_value="222222"):
             with self.assertRaises(roxy_flow.ReplacementEmailFailure) as raised:
-                roxy_flow._change_email_via_protocol(
+                roxy_flow._change_email_via_har_api(
                     Mock(), session=_session(), new_email="new@example.com",
                     api_url="https://mail.example/new", progress=Mock(),
                 )
@@ -190,7 +172,7 @@ class ProtocolEmailChangeTests(unittest.TestCase):
         with patch.object(roxy_flow, "_browser_json_request", side_effect=responses), \
                 patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None):
             with self.assertRaises(roxy_flow.ReplacementEmailFailure) as raised:
-                roxy_flow._change_email_via_protocol(
+                roxy_flow._change_email_via_har_api(
                     Mock(), session=_session(), new_email="new@example.com",
                     api_url="https://mail.example/new", progress=Mock(),
                 )
@@ -202,6 +184,19 @@ class ProtocolEmailChangeTests(unittest.TestCase):
             "reauth_required",
         )
 
+    def test_account_settings_prefers_versioned_testids(self):
+        driver = Mock()
+        driver.execute_script.side_effect = ["clicked", "ready"]
+        safe_get = Mock()
+        with patch.object(roxy_flow.time, "sleep"):
+            roxy_flow._open_account_settings(driver, "old@example.com", safe_get, Mock())
+
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn('data-testid="account-info-email"', script)
+        self.assertIn('data-testid="modal-edit-email"', script)
+        self.assertEqual(driver.execute_script.call_count, 2)
+        safe_get.assert_called_once()
+
     def test_segmented_otp_fills_each_box_without_single_input_fallback(self):
         driver = Mock()
         driver.execute_script.return_value = 6
@@ -211,6 +206,67 @@ class ProtocolEmailChangeTests(unittest.TestCase):
         fallback.assert_not_called()
         self.assertIn("Number(el.maxLength) === 1", driver.execute_script.call_args.args[0])
         self.assertIn('data-testid="modal-add-email-otp"', driver.execute_script.call_args.args[0])
+
+    def test_dom_fallback_accepts_logout_after_otp_submit(self):
+        class ScriptedDriver:
+            def __init__(self):
+                self.urls = iter([
+                    "https://chatgpt.com/#settings/Account",
+                    "https://chatgpt.com/#settings/Account",
+                    "https://chatgpt.com/auth/logout",
+                ])
+
+            @property
+            def current_url(self):
+                return next(self.urls)
+
+            @staticmethod
+            def execute_script(script, *_args):
+                return "modal-add-email-otp" in script or "modal-edit-email" in script
+
+        driver = ScriptedDriver()
+        email_input = Mock()
+        otp_input = Mock()
+        progress = Mock()
+        with patch.object(roxy_flow, "_body_text", side_effect=["Change email", "Verification code", ""]), \
+                patch.object(roxy_flow, "_visible_input", side_effect=[
+                    None, None, email_input,
+                    None, otp_input, None,
+                ]), patch.object(roxy_flow, "_set_value"), \
+                patch.object(roxy_flow, "_set_otp_value"), \
+                patch.object(roxy_flow, "_submit_near"), \
+                patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None), \
+                patch.object(roxy_flow.mail_api, "wait_for_new_otp", return_value="222222"), \
+                patch.object(roxy_flow.time, "sleep"):
+            roxy_flow._change_email(
+                driver, old_email="old@example.com", new_email="new@example.com",
+                password="Password!", totp_secret="SECRET",
+                api_url="https://mail.example/new", progress=progress,
+            )
+        progress.assert_any_call("changed", "服务端已完成邮箱更新并退出旧登录态")
+
+    def test_missing_har_api_falls_back_before_begin(self):
+        driver = Mock()
+        with patch.object(
+            roxy_flow, "_change_email_via_har_api",
+            side_effect=roxy_flow._HarApiUnavailable("missing"),
+        ), patch.object(roxy_flow, "_open_account_settings") as open_settings, \
+                patch.object(roxy_flow, "_change_email") as dom_change:
+            roxy_flow._change_email_har_guided(
+                driver,
+                session=_session(),
+                old_email="old@example.com",
+                new_email="new@example.com",
+                password="Password!",
+                totp_secret="SECRET",
+                source_api_url="https://mail.example/old",
+                api_url="https://mail.example/new",
+                safe_get=Mock(),
+                progress=Mock(),
+            )
+
+        open_settings.assert_called_once()
+        dom_change.assert_called_once()
 
 
 if __name__ == "__main__":

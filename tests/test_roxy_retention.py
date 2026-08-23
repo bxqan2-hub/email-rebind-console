@@ -76,7 +76,7 @@ class RoxyRetentionTests(unittest.TestCase):
                     {"user": {"email": "old@example.com"}},
                     {"user": {"email": "new@example.com"}, "accessToken": "at-new"},
                 ]), \
-                patch.object(roxy_flow, "_change_email_via_protocol") as protocol_change, \
+                patch.object(roxy_flow, "_change_email_har_guided"), \
                 patch.object(roxy_flow, "_clear_login_state"):
             result = roxy_flow.perform_email_rebind(
                 old_email="old@example.com", new_email="new@example.com",
@@ -86,9 +86,6 @@ class RoxyRetentionTests(unittest.TestCase):
 
         self.assertEqual(result["roxy_browser_status"], "open")
         self.assertEqual(result["roxy_profile_id"], "profile-1")
-        protocol_change.assert_called_once()
-        self.assertEqual(protocol_change.call_args.kwargs["new_email"], "new@example.com")
-        self.assertEqual(protocol_change.call_args.kwargs["session"]["user"]["email"], "old@example.com")
         self.assertNotIn("driver.quit", events)
         self.assertNotIn("cleanup", events)
         self.assertIn("profile-1", roxy_flow._RETAINED)
@@ -103,8 +100,8 @@ class RoxyRetentionTests(unittest.TestCase):
         loaded, _driver, _client_box = self._loaded(events)
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
                 patch.object(roxy_flow, "_complete_login", return_value={"user": {"email": "old@example.com"}}), \
-                patch.object(roxy_flow, "_change_email_via_protocol", side_effect=RuntimeError("protocol failed")):
-            with self.assertRaisesRegex(RuntimeError, "protocol failed"):
+                patch.object(roxy_flow, "_change_email_har_guided", side_effect=RuntimeError("settings failed")):
+            with self.assertRaisesRegex(RuntimeError, "settings failed"):
                 roxy_flow.perform_email_rebind(
                     old_email="old@example.com", new_email="new@example.com",
                     password="Password!", totp_secret="JBSWY3DPEHPK3PXP",

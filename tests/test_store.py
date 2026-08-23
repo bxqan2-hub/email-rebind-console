@@ -245,7 +245,7 @@ class StoreTests(unittest.TestCase):
                 self.assertNotIn("failure_reason", restored)
 
     def test_restart_after_committed_boundary_freezes_uncertain_identity(self):
-        for stage in ("submit_new_email_otp", "protocol_verify", "changed", "relogin_new", "verified", "kept_open"):
+        for stage in ("submit_new_email_otp", "changed", "relogin_new", "verified", "kept_open"):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"):
