@@ -136,7 +136,33 @@ class AppTests(unittest.TestCase):
         self.assertIn("data-delete-replacement", script)
         self.assertIn("data-delete-proxy", script)
         self.assertIn("data-delete-account", script)
+        self.assertIn("data-retry-account", script)
+        self.assertIn("失败重试", script)
         self.assertIn("btn danger", script)
+
+    def test_failed_account_retry_route_submits_traced_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch("app.worker.submit_tasks", return_value=1) as submit:
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies("http://proxy.example:8080")
+                first = store.reserve_batch()[0]
+                store.finish_failure(first["id"], "test failure")
+                account_id = store.list_accounts()[0]["id"]
+                client = app.create_app(recover=False).test_client()
+
+                response = client.post(f"/api/accounts/{account_id}/retry")
+
+                self.assertEqual(response.status_code, 202)
+                task = response.get_json()["task"]
+                self.assertEqual(task["attempt"], 2)
+                self.assertEqual(task["retry_of_task_id"], first["id"])
+                submit.assert_called_once_with([task], 1)
 
     def test_success_account_can_refresh_at_and_close_roxy(self):
         with tempfile.TemporaryDirectory() as tmp:

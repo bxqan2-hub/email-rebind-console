@@ -549,6 +549,76 @@ def reserve_batch(account_ids: Iterable[int] | None = None) -> list[dict]:
         return created
 
 
+def reserve_failed_account_retry(account_id: int) -> dict:
+    """为一个已失败账号建立可追溯的人工重试任务。"""
+    with _LOCK:
+        accounts = _read(_ACCOUNTS)
+        replacements = _read(_REPLACEMENTS)
+        tasks = _read(_TASKS)
+        account = next(
+            (row for row in accounts if int(row.get("id") or 0) == int(account_id)),
+            None,
+        )
+        if not account:
+            return {"task": None, "reason": "not_found"}
+        if account.get("status") != "failed":
+            return {"task": None, "reason": "not_failed"}
+        if any(
+            int(row.get("account_id") or 0) == int(account_id)
+            and row.get("status") in {"queued", "running"}
+            for row in tasks
+        ):
+            return {"task": None, "reason": "busy"}
+        replacement = next((
+            row for row in sorted(replacements, key=lambda item: int(item.get("id") or 0))
+            if row.get("status") == "available"
+        ), None)
+        if not replacement:
+            return {"task": None, "reason": "no_replacement"}
+
+        previous = next((
+            row for row in sorted(tasks, key=lambda item: int(item.get("id") or 0), reverse=True)
+            if int(row.get("account_id") or 0) == int(account_id)
+            and row.get("status") == "failed"
+        ), None)
+        now = _now()
+        attempt = int((previous or {}).get("attempt") or 1) + 1
+        task = {
+            "id": _next_id(tasks),
+            "account_id": int(account.get("id") or 0),
+            "replacement_id": int(replacement.get("id") or 0),
+            "old_email": account.get("old_email"),
+            "new_email": replacement.get("email"),
+            "status": "queued",
+            "stage": "manual_retry",
+            "attempt": attempt,
+            "message": f"第 {attempt} 次尝试：失败重试已提交，等待 Roxy 浏览器",
+            "created_at": now,
+            "updated_at": now,
+        }
+        if previous:
+            task["root_task_id"] = int(previous.get("root_task_id") or previous.get("id") or 0)
+            task["retry_of_task_id"] = int(previous.get("id") or 0)
+            previous["manual_retry_task_id"] = task["id"]
+            previous["updated_at"] = now
+        tasks.append(task)
+        previous_error = str(account.get("error") or "").strip()
+        account.update({"status": "queued", "active_task_id": task["id"], "updated_at": now})
+        account.pop("error", None)
+        if previous_error:
+            account["last_error"] = previous_error
+        replacement.update({
+            "status": "reserved",
+            "active_task_id": task["id"],
+            "bound_old_email": account.get("old_email"),
+            "updated_at": now,
+        })
+        _write(_TASKS, tasks)
+        _write(_ACCOUNTS, accounts)
+        _write(_REPLACEMENTS, replacements)
+        return {"task": dict(task), "reason": "reserved"}
+
+
 def finish_replacement_failure(task_id: int, error: str, failure_code: str) -> bool:
     """隔离收不到验证码/已占用的替换邮箱，并释放原账号等待自动轮换。"""
     with _LOCK:

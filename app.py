@@ -187,6 +187,24 @@ def create_app(*, recover: bool = True) -> Flask:
         submitted = worker.submit_tasks(tasks, workers)
         return jsonify({"ok": True, "submitted": submitted, "workers": workers, "tasks": tasks})
 
+    @app.post("/api/accounts/<int:account_id>/retry")
+    def api_retry_failed_account(account_id: int):
+        if int(store.summary().get("proxy_available") or 0) < 1:
+            return jsonify({"ok": False, "error": "换绑代理池没有可用代理，请先重新启用或导入代理"}), 409
+        result = store.reserve_failed_account_retry(account_id)
+        task = result.get("task")
+        if not task:
+            reason = result.get("reason")
+            if reason == "not_found":
+                return jsonify({"ok": False, "error": "原邮箱账号不存在"}), 404
+            if reason == "not_failed":
+                return jsonify({"ok": False, "error": "只有失败账号可以使用失败重试"}), 409
+            if reason == "busy":
+                return jsonify({"ok": False, "error": "该账号已有活动换绑任务"}), 409
+            return jsonify({"ok": False, "error": "替换邮箱号池没有可用邮箱"}), 409
+        submitted = worker.submit_tasks([task], 1)
+        return jsonify({"ok": True, "submitted": submitted, "task": task}), 202
+
     @app.get("/api/tasks")
     def api_tasks():
         return jsonify({"ok": True, "items": store.list_tasks(), "summary": store.summary()})

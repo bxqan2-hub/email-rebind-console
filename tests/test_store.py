@@ -209,6 +209,13 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(store.list_replacements()[0]["status"], "available")
                 self.assertEqual(store.list_accounts()[0]["status"], "failed")
 
+                retry = store.reserve_failed_account_retry(store.list_accounts()[0]["id"])
+                self.assertEqual(retry["reason"], "reserved")
+                self.assertEqual(retry["task"]["attempt"], 2)
+                self.assertEqual(retry["task"]["retry_of_task_id"], task["id"])
+                self.assertEqual(store.list_accounts()[0]["status"], "queued")
+                self.assertEqual(store.list_replacements()[0]["status"], "reserved")
+
     def test_bad_replacement_is_quarantined_and_next_email_is_reserved(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
