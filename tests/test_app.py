@@ -56,6 +56,39 @@ class AppTests(unittest.TestCase):
         self.assertIn("replacement_failed", script)
         self.assertIn("data-restore-proxy", script)
         self.assertIn("proxy_available", script)
+        self.assertIn("data-refresh-at", script)
+        self.assertIn("data-close-roxy", script)
+        self.assertIn("成功窗口规则", html)
+
+    def test_success_account_can_refresh_at_and_close_roxy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"):
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                task = store.reserve_batch()[0]
+                store.finish_success(task["id"], {
+                    "email": "new@example.com", "access_token": "at-new",
+                    "roxy_profile_id": "profile-1", "roxy_browser_status": "open",
+                })
+                account_id = store.list_accounts()[0]["id"]
+                client = app.create_app(recover=False).test_client()
+
+                with patch("app.worker.submit_access_token_refresh", return_value={
+                    "accepted": True, "account_id": account_id,
+                }):
+                    refresh = client.post(f"/api/accounts/{account_id}/refresh-at")
+                self.assertEqual(refresh.status_code, 202)
+                self.assertTrue(refresh.get_json()["accepted"])
+
+                with patch("app.roxy_flow.close_retained_profile", return_value=True) as close:
+                    response = client.post(f"/api/accounts/{account_id}/close-roxy")
+                self.assertEqual(response.status_code, 200)
+                close.assert_called_once_with("profile-1")
+                self.assertEqual(response.get_json()["item"]["roxy_browser_status"], "closed")
 
 
 if __name__ == "__main__":

@@ -91,6 +91,35 @@ class WorkerRotationTests(unittest.TestCase):
                 self.assertEqual(task["stage"], "manual_review")
                 self.assertFalse(task["retryable"])
 
+    def test_success_account_refresh_updates_exported_access_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(worker.roxy_flow, "refresh_retained_access_token", return_value={
+                        "email": "new@example.com", "access_token": "at-plus",
+                        "roxy_profile_id": "profile-1",
+                    }) as refresh:
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                task = store.reserve_batch()[0]
+                store.finish_success(task["id"], {
+                    "email": "new@example.com", "access_token": "at-old",
+                    "roxy_profile_id": "profile-1",
+                })
+                account_id = store.list_accounts()[0]["id"]
+                self.assertIsNotNone(store.begin_access_token_refresh(account_id))
+                worker._refresh_access_token(account_id)
+
+                refresh.assert_called_once_with("profile-1", "new@example.com")
+                self.assertEqual(
+                    store.export_success_lines(),
+                    ["new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
+                )
+                self.assertEqual(store.list_accounts()[0]["roxy_browser_status"], "open")
+
 
 if __name__ == "__main__":
     unittest.main()

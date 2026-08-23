@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 from typing import Callable
 
@@ -13,6 +14,8 @@ import mail_api
 import settings
 
 logger = logging.getLogger(__name__)
+_RETAINED_LOCK = threading.RLock()
+_RETAINED: dict[str, dict] = {}
 
 
 class ReplacementEmailFailure(RuntimeError):
@@ -55,6 +58,143 @@ def _load_main_roxy():
         RoxyBrowserClient, _build_driver, _center_browser_window, _fetch_chatgpt_session,
         _safe_get, _submit_email_and_wait_next, probe_selenium_driver_exit_geo,
     )
+
+
+def _retain_browser(*, profile_id: str, email: str, client, opened, driver) -> None:
+    key = str(profile_id or "").strip()
+    if not key:
+        raise RuntimeError("Roxy 成功窗口缺少 profile_id")
+    record = {
+        "profile_id": key, "email": str(email or "").strip(),
+        "client": client, "opened": opened, "driver": driver,
+        "lock": threading.RLock(),
+    }
+    with _RETAINED_LOCK:
+        previous = _RETAINED.pop(key, None)
+        _RETAINED[key] = record
+    if previous and previous.get("driver") is not driver:
+        try:
+            previous["driver"].quit()
+        except Exception:
+            pass
+
+
+def _open_existing_profile(client, profile_id: str):
+    """打开已保留的 Roxy 环境，不触发“一号一新环境”的创建限制。"""
+    from config import roxybrowser as roxy_cfg  # type: ignore
+    from core.roxybrowser_client import RoxyOpenResult, _first, _workspace_id_value  # type: ignore
+
+    key = str(profile_id or "").strip()
+    if not key:
+        raise RuntimeError("成功账号没有可用的 Roxy profile_id")
+    path = str(roxy_cfg.ROXY_OPEN_PATH).format(profile_id=key)
+    body = dict(getattr(roxy_cfg, "ROXY_OPEN_EXTRA_PARAMS", {}) or {})
+    body.setdefault("workspaceId", _workspace_id_value())
+    body.setdefault("dirId", int(key) if key.isdigit() else key)
+    body.setdefault("args", [])
+    body.setdefault("forceOpen", True)
+    body["headless"] = False
+    method = str(roxy_cfg.ROXY_OPEN_METHOD or "POST").upper()
+    result = client.request(
+        method, path,
+        params=body if method == "GET" else None,
+        json_body=body if method != "GET" else None,
+    )
+    debugger_address = client._extract_debugger_address(result)
+    webdriver_url = _first(result, [
+        ("webdriver",), ("webDriver",), ("webdriver_url",), ("webdriverUrl",),
+        ("selenium",), ("selenium_url",), ("seleniumUrl",),
+        ("data", "webdriver"), ("data", "webDriver"),
+        ("data", "webdriver_url"), ("data", "webdriverUrl"),
+        ("data", "selenium"), ("data", "selenium_url"), ("data", "seleniumUrl"),
+    ]) or None
+    ws_endpoint = _first(result, [
+        ("ws",), ("wsEndpoint",), ("ws_endpoint",), ("debuggerWsUrl",),
+        ("data", "ws"), ("data", "wsEndpoint"),
+        ("data", "ws_endpoint"), ("data", "debuggerWsUrl"),
+    ]) or None
+    if not debugger_address and not webdriver_url:
+        raise RuntimeError("Roxy 已打开保留环境，但没有返回 Selenium/调试地址")
+    return RoxyOpenResult(
+        key, result, debugger_address=debugger_address,
+        webdriver_url=webdriver_url, ws_endpoint=ws_endpoint,
+        created_by_run=False,
+    )
+
+
+def _retained_or_reopen(profile_id: str, expected_email: str) -> dict:
+    key = str(profile_id or "").strip()
+    with _RETAINED_LOCK:
+        existing = _RETAINED.get(key)
+    if existing:
+        return existing
+    RoxyBrowserClient, build_driver, center_window, *_rest = _load_main_roxy()
+    client = RoxyBrowserClient()
+    opened = _open_existing_profile(client, key)
+    driver = build_driver(opened)
+    center_window(driver)
+    driver.set_page_load_timeout(60)
+    driver.set_script_timeout(60)
+    _retain_browser(
+        profile_id=key, email=expected_email, client=client,
+        opened=opened, driver=driver,
+    )
+    with _RETAINED_LOCK:
+        return _RETAINED[key]
+
+
+def refresh_retained_access_token(profile_id: str, expected_email: str) -> dict:
+    """复用成功窗口的登录态重新读取 session/AT；窗口关闭后会重开同一环境。"""
+    record = _retained_or_reopen(profile_id, expected_email)
+    with record["lock"]:
+        _client_type, _build, _center, fetch_session, _safe_get, _submit_email, _probe_driver_exit = _load_main_roxy()
+        driver = record["driver"]
+        session = fetch_session(
+            driver, timeout=45, auto_jump_wait=3, refresh_attempts=1,
+        )
+        observed = _session_email(session)
+        expected = str(expected_email or "").strip()
+        if expected and observed.lower() != expected.lower():
+            raise RuntimeError(f"保留窗口登录邮箱不匹配：期望 {expected}，实际 {observed or '空'}")
+        access_token = str(session.get("accessToken") or "").strip()
+        if not access_token:
+            raise RuntimeError("保留窗口 /api/auth/session 没有返回 accessToken")
+        record["email"] = observed or expected
+        return {
+            "email": observed or expected, "access_token": access_token,
+            "session": session, "roxy_profile_id": str(profile_id),
+        }
+
+
+def close_retained_profile(profile_id: str) -> bool:
+    """关闭成功账号窗口但保留 Roxy 环境；之后仍可重开同一环境重新获取 AT。"""
+    key = str(profile_id or "").strip()
+    if not key:
+        raise RuntimeError("成功账号没有可关闭的 Roxy profile_id")
+    with _RETAINED_LOCK:
+        record = _RETAINED.get(key)
+    if record:
+        with record["lock"]:
+            closed = bool(record["client"].close_profile(key))
+            try:
+                record["driver"].quit()
+            except Exception:
+                pass
+    else:
+        RoxyBrowserClient, *_rest = _load_main_roxy()
+        closed = bool(RoxyBrowserClient().close_profile(key))
+    if not closed:
+        raise RuntimeError(f"Roxy 窗口关闭失败：profile={key}")
+    if record:
+        with _RETAINED_LOCK:
+            if _RETAINED.get(key) is record:
+                _RETAINED.pop(key, None)
+    return True
+
+
+def retained_profile_is_connected(profile_id: str) -> bool:
+    with _RETAINED_LOCK:
+        return str(profile_id or "").strip() in _RETAINED
 
 
 def _body_text(driver) -> str:
@@ -316,6 +456,7 @@ def perform_email_rebind(
     client = RoxyBrowserClient(profile_proxy=clean_proxy)
     opened = None
     driver = None
+    keep_success_open = False
     try:
         progress("check_proxy", "检测换绑代理出口；失败时自动切换下一条")
         try:
@@ -386,15 +527,31 @@ def perform_email_rebind(
                 f"服务端已显示邮箱更新完成，但新邮箱重新登录/AT 刷新失败：{type(exc).__name__}: {str(exc)[:300]}",
             ) from exc
         progress("verified", "新邮箱登录和 accessToken 校验完成")
+        _retain_browser(
+            profile_id=opened.profile_id, email=observed_new,
+            client=client, opened=opened, driver=driver,
+        )
+        keep_success_open = True
+        progress("kept_open", "AT 已获取；Roxy 窗口保持新邮箱登录态，等待重新获取 AT 或手动关闭")
         return {
             "email": observed_new, "access_token": access_token, "session": new_session,
             "roxy_profile_id": opened.profile_id, "proxy_exit_geo": exit_geo,
+            "roxy_browser_status": "open",
         }
     finally:
-        if driver is not None and not settings.KEEP_BROWSER_OPEN:
+        # 成功窗口及其 Selenium 连接都保留；任何失败分支立即关闭并删除本轮临时环境。
+        if driver is not None and not keep_success_open:
             try:
                 driver.quit()
             except Exception:
                 pass
-        if opened is not None and not settings.KEEP_BROWSER_OPEN:
-            client.cleanup_profile(opened)
+        if opened is not None and not keep_success_open:
+            try:
+                client.close_profile(str(opened.profile_id))
+            except Exception:
+                pass
+            if bool(getattr(opened, "created_by_run", True)):
+                try:
+                    client.delete_profile(str(opened.profile_id))
+                except Exception:
+                    pass

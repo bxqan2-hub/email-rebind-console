@@ -394,6 +394,10 @@ def summary() -> dict:
             "accounts_total": len(accounts),
             "accounts_ready": sum(1 for row in accounts if row.get("status") in {"ready", "failed"}),
             "accounts_success": sum(1 for row in accounts if row.get("status") == "success"),
+            "roxy_open": sum(
+                1 for row in accounts
+                if row.get("status") == "success" and row.get("roxy_browser_status") == "open"
+            ),
             "replacement_total": len(replacements),
             "replacement_available": sum(1 for row in replacements if row.get("status") == "available"),
             "replacement_failed": sum(1 for row in replacements if row.get("status") == "failed"),
@@ -661,6 +665,84 @@ def get_task_context(task_id: int) -> dict | None:
         return {"task": dict(task), "account": dict(account), "replacement": dict(replacement)}
 
 
+def get_success_account_context(account_id: int) -> dict | None:
+    with _LOCK:
+        account = next((
+            row for row in _read(_ACCOUNTS)
+            if int(row.get("id") or 0) == int(account_id)
+        ), None)
+        if not account or account.get("status") != "success":
+            return None
+        return dict(account)
+
+
+def begin_access_token_refresh(account_id: int) -> dict | None:
+    with _LOCK:
+        rows = _read(_ACCOUNTS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
+        if not row or row.get("status") != "success" or not row.get("roxy_profile_id"):
+            return None
+        if row.get("at_refresh_status") == "running":
+            return None
+        now = _now()
+        row.update({
+            "at_refresh_status": "running", "at_refresh_started_at": now,
+            "updated_at": now,
+        })
+        row.pop("at_refresh_error", None)
+        _write(_ACCOUNTS, rows)
+        return dict(row)
+
+
+def finish_access_token_refresh(account_id: int, result: dict) -> dict | None:
+    with _LOCK:
+        rows = _read(_ACCOUNTS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
+        if not row or row.get("status") != "success":
+            return None
+        access_token = str(result.get("access_token") or "").strip()
+        if not access_token:
+            raise ValueError("重新获取结果缺少 access_token")
+        now = _now()
+        row.update({
+            "access_token": access_token, "at_refresh_status": "success",
+            "at_refreshed_at": now, "roxy_browser_status": "open",
+            "updated_at": now,
+        })
+        row.pop("at_refresh_error", None)
+        _write(_ACCOUNTS, rows)
+        return _public_account(row)
+
+
+def fail_access_token_refresh(account_id: int, error: str, *, browser_open: bool = False) -> dict | None:
+    with _LOCK:
+        rows = _read(_ACCOUNTS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
+        if not row or row.get("status") != "success":
+            return None
+        now = _now()
+        row.update({
+            "at_refresh_status": "failed", "at_refresh_error": str(error or "重新获取 AT 失败")[:600],
+            "updated_at": now,
+        })
+        if browser_open:
+            row["roxy_browser_status"] = "open"
+        _write(_ACCOUNTS, rows)
+        return _public_account(row)
+
+
+def mark_roxy_profile_closed(account_id: int) -> dict | None:
+    with _LOCK:
+        rows = _read(_ACCOUNTS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
+        if not row or row.get("status") != "success":
+            return None
+        now = _now()
+        row.update({"roxy_browser_status": "closed", "roxy_closed_at": now, "updated_at": now})
+        _write(_ACCOUNTS, rows)
+        return _public_account(row)
+
+
 def update_task(task_id: int, *, status: str | None = None, stage: str | None = None, message: str | None = None) -> bool:
     with _LOCK:
         tasks = _read(_TASKS)
@@ -692,13 +774,18 @@ def finish_success(task_id: int, result: dict) -> None:
         now = _now()
         access_token = str(result.get("access_token") or "").strip()
         verified_email = str(result.get("email") or task.get("new_email") or "").strip()
+        profile_id = str(result.get("roxy_profile_id") or "").strip()
         task.update({
-            "status": "success", "stage": "completed", "message": "换绑完成；新邮箱重新登录成功，AT 已刷新",
+            "status": "success", "stage": "kept_open",
+            "message": "换绑完成；AT 已获取，Roxy 窗口保持新邮箱登录态",
             "completed_at": now, "updated_at": now, "verified_email": verified_email,
+            "roxy_profile_id": profile_id, "roxy_browser_status": "open",
         })
         account.update({
             "status": "success", "current_email": verified_email, "new_email": verified_email,
-            "access_token": access_token, "rebound_at": now, "updated_at": now,
+            "access_token": access_token, "rebound_at": now, "at_refreshed_at": now,
+            "at_refresh_status": "success", "roxy_profile_id": profile_id,
+            "roxy_browser_status": "open", "updated_at": now,
         })
         account.pop("active_task_id", None)
         account.pop("error", None)
@@ -750,6 +837,25 @@ def recover_interrupted_tasks() -> int:
         else:
             finish_failure(task_id, "分站进程重启，原任务已释放，可重新开始")
     return len(active)
+
+
+def recover_interrupted_access_token_refreshes() -> int:
+    with _LOCK:
+        rows = _read(_ACCOUNTS)
+        recovered = 0
+        now = _now()
+        for row in rows:
+            if row.get("at_refresh_status") != "running":
+                continue
+            row.update({
+                "at_refresh_status": "failed",
+                "at_refresh_error": "分站进程在重新获取 AT 时重启，请再次点击重新获取 AT",
+                "updated_at": now,
+            })
+            recovered += 1
+        if recovered:
+            _write(_ACCOUNTS, rows)
+        return recovered
 
 
 def export_success_lines() -> list[str]:

@@ -19,11 +19,30 @@ class StoreTests(unittest.TestCase):
                 tasks = store.reserve_batch()
                 self.assertEqual(tasks[0]["old_email"], "old@example.com")
                 self.assertEqual(tasks[0]["new_email"], "new@example.com")
-                store.finish_success(tasks[0]["id"], {"email": "new@example.com", "access_token": "at-new"})
+                store.finish_success(tasks[0]["id"], {
+                    "email": "new@example.com", "access_token": "at-new",
+                    "roxy_profile_id": "profile-1", "roxy_browser_status": "open",
+                })
                 self.assertEqual(
                     store.export_success_lines(),
                     ["new@example.com----Password!----JBSWY3DPEHPK3PXP----at-new"],
                 )
+                account = store.list_accounts()[0]
+                self.assertEqual(account["roxy_browser_status"], "open")
+                self.assertEqual(account["roxy_profile_id"], "profile-1")
+                self.assertEqual(store.summary()["roxy_open"], 1)
+
+                started = store.begin_access_token_refresh(account["id"])
+                self.assertEqual(started["at_refresh_status"], "running")
+                refreshed = store.finish_access_token_refresh(account["id"], {"access_token": "at-plus"})
+                self.assertEqual(refreshed["at_refresh_status"], "success")
+                self.assertEqual(
+                    store.export_success_lines(),
+                    ["new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
+                )
+                closed = store.mark_roxy_profile_closed(account["id"])
+                self.assertEqual(closed["roxy_browser_status"], "closed")
+                self.assertEqual(store.summary()["roxy_open"], 0)
 
     def test_failure_releases_replacement(self):
         with tempfile.TemporaryDirectory() as tmp:

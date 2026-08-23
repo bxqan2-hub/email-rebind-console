@@ -56,6 +56,17 @@ C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe a
 
 换绑遵循 ChatGPT 网页流程：登录 → Settings → Account → 点击当前邮箱 → 新邮箱验证 → 退出 → 用新邮箱重新登录并读取 `/api/auth/session` 的新 AT。
 
+## 成功窗口与 AT 刷新
+
+- 换绑失败：关闭并删除本轮临时 Roxy 环境，释放未判坏的替换邮箱。
+- 换绑成功：获取新 AT 后不退出、不关闭窗口，保持新邮箱登录态和 Roxy 环境。
+- “重新获取 AT”：复用同一成功窗口读取最新 `/api/auth/session`；窗口曾手动关闭时，
+  会重开同一 Roxy Profile，登录资料仍然保留。适合充值 Plus 后刷新 AT。
+- “关闭窗口”：只关闭 Roxy 窗口并保留 Profile；以后仍可点击“重新获取 AT”重开。
+
+完成账号表会显示 Profile ID、窗口状态、AT 更新时间和失败原因。重新获取成功后，
+四段导出里的 AT 会立即更新。
+
 邮箱 API 默认校验 HTTPS 证书；只有内部自签名接口需要在启动前设置
 `EMAIL_REBIND_MAIL_VERIFY_TLS=0`。也可用 `EMAIL_REBIND_PORT`、
 `EMAIL_REBIND_WORKERS`、`EMAIL_REBIND_OTP_MAX_WAIT` 调整端口、并发和取码超时。

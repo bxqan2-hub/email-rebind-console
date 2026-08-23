@@ -1,0 +1,149 @@
+# -*- coding: utf-8 -*-
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import roxy_flow
+
+
+class FakeDriver:
+    def __init__(self, events):
+        self.events = events
+
+    def set_page_load_timeout(self, _value):
+        pass
+
+    def set_script_timeout(self, _value):
+        pass
+
+    def quit(self):
+        self.events.append("driver.quit")
+
+
+class FakeClient:
+    def __init__(self, events, profile_proxy=None):
+        self.events = events
+        self.profile_proxy = profile_proxy
+
+    def open_profile(self, **kwargs):
+        self.events.append(f"open:{kwargs.get('require_proxy_exit_ip')}")
+        return SimpleNamespace(
+            profile_id="profile-1", preflight_exit_geo={"ip": "203.0.113.10"},
+        )
+
+    def cleanup_profile(self, _opened):
+        self.events.append("cleanup")
+
+    def close_profile(self, profile_id):
+        self.events.append(f"close:{profile_id}")
+        return True
+
+    def delete_profile(self, profile_id):
+        self.events.append(f"delete:{profile_id}")
+        return True
+
+
+class RoxyRetentionTests(unittest.TestCase):
+    def tearDown(self):
+        with roxy_flow._RETAINED_LOCK:
+            roxy_flow._RETAINED.clear()
+
+    def _loaded(self, events, fetch_session=None):
+        client_box = {}
+
+        def client_factory(profile_proxy=None):
+            client = FakeClient(events, profile_proxy)
+            client_box["client"] = client
+            return client
+
+        driver = FakeDriver(events)
+        loaded = (
+            client_factory,
+            lambda _opened: driver,
+            lambda _driver: None,
+            fetch_session or (lambda *_a, **_k: {}),
+            lambda *_a, **_k: None,
+            lambda *_a, **_k: None,
+            lambda *_a, **_k: {"ip": "203.0.113.10", "country": "US"},
+        )
+        return loaded, driver, client_box
+
+    def test_success_keeps_logged_in_window_and_close_button_closes_it(self):
+        events = []
+        loaded, _driver, _client_box = self._loaded(events)
+        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
+                patch.object(roxy_flow, "_complete_login", side_effect=[
+                    {"user": {"email": "old@example.com"}},
+                    {"user": {"email": "new@example.com"}, "accessToken": "at-new"},
+                ]), \
+                patch.object(roxy_flow, "_open_account_settings"), \
+                patch.object(roxy_flow, "_change_email"), \
+                patch.object(roxy_flow, "_clear_login_state"):
+            result = roxy_flow.perform_email_rebind(
+                old_email="old@example.com", new_email="new@example.com",
+                password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
+            )
+
+        self.assertEqual(result["roxy_browser_status"], "open")
+        self.assertEqual(result["roxy_profile_id"], "profile-1")
+        self.assertNotIn("driver.quit", events)
+        self.assertNotIn("cleanup", events)
+        self.assertIn("profile-1", roxy_flow._RETAINED)
+
+        self.assertTrue(roxy_flow.close_retained_profile("profile-1"))
+        self.assertIn("close:profile-1", events)
+        self.assertIn("driver.quit", events)
+        self.assertNotIn("profile-1", roxy_flow._RETAINED)
+
+    def test_failure_quits_driver_and_cleans_temporary_profile(self):
+        events = []
+        loaded, _driver, _client_box = self._loaded(events)
+        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
+                patch.object(roxy_flow, "_complete_login", return_value={"user": {"email": "old@example.com"}}), \
+                patch.object(roxy_flow, "_open_account_settings", side_effect=RuntimeError("settings failed")):
+            with self.assertRaisesRegex(RuntimeError, "settings failed"):
+                roxy_flow.perform_email_rebind(
+                    old_email="old@example.com", new_email="new@example.com",
+                    password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                    api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
+                )
+
+        self.assertIn("driver.quit", events)
+        self.assertIn("close:profile-1", events)
+        self.assertIn("delete:profile-1", events)
+        self.assertFalse(roxy_flow._RETAINED)
+
+    def test_refresh_reuses_retained_driver_and_validates_new_email(self):
+        events = []
+        updated_session = {"user": {"email": "new@example.com"}, "accessToken": "at-plus"}
+        loaded, driver, _client_box = self._loaded(events, fetch_session=lambda *_a, **_k: updated_session)
+        client = FakeClient(events)
+        roxy_flow._retain_browser(
+            profile_id="profile-1", email="new@example.com", client=client,
+            opened=SimpleNamespace(profile_id="profile-1"), driver=driver,
+        )
+        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded):
+            result = roxy_flow.refresh_retained_access_token("profile-1", "new@example.com")
+
+        self.assertEqual(result["access_token"], "at-plus")
+        self.assertEqual(result["email"], "new@example.com")
+        self.assertNotIn("driver.quit", events)
+
+    def test_refresh_reopens_same_profile_after_window_was_closed(self):
+        events = []
+        session = {"user": {"email": "new@example.com"}, "accessToken": "at-reopened"}
+        loaded, _driver, _client_box = self._loaded(events, fetch_session=lambda *_a, **_k: session)
+        reopened = SimpleNamespace(profile_id="profile-1")
+        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
+                patch.object(roxy_flow, "_open_existing_profile", return_value=reopened) as open_existing:
+            result = roxy_flow.refresh_retained_access_token("profile-1", "new@example.com")
+
+        open_existing.assert_called_once()
+        self.assertEqual(open_existing.call_args.args[1], "profile-1")
+        self.assertEqual(result["access_token"], "at-reopened")
+        self.assertIn("profile-1", roxy_flow._RETAINED)
+
+
+if __name__ == "__main__":
+    unittest.main()

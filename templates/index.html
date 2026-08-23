@@ -21,6 +21,7 @@
     <section class="stats" id="stats"></section>
     <div class="eligibility-note"><strong>执行前检查</strong><span>新邮箱不能已绑定其他 OpenAI 账号；账号需可使用 Settings → Account 自助换绑。单账号最多 24 小时 2 次、生命周期 20 次。</span></div>
     <div class="logic-note"><strong>双重自动轮换</strong><span>每个账号先从“换绑代理”池随机选择一条，创建 Roxy 前检测真实出口；检测失败立即标记该代理并随机换下一条，不消耗替换邮箱。收不到新邮箱验证码、取码 API 超时或新邮箱已被占用时，才隔离该邮箱并为同一原账号换下一个邮箱。</span></div>
+    <div class="logic-note keep-open-note"><strong>成功窗口规则</strong><span>换绑失败会自动关闭并删除临时 Roxy 环境；换绑成功并获取新 AT 后，Roxy 窗口保持新邮箱登录态。可在完成账号后点击“重新获取 AT”（例如充值 Plus 后刷新）或“关闭窗口”。</span></div>
 
     <section class="view" id="view-workspace">
       <div class="grid three">
@@ -52,6 +53,11 @@
       <article class="card result-card">
         <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>导出格式：新邮箱----原密码----原2FA----新AT；主站可直接识别并迁移分组。</p></div><div class="actions"><button class="btn ghost" id="copyExport">复制完成结果</button><a class="btn primary link" href="/api/export">下载 TXT</a></div></div>
         <div id="recentTasks" class="task-list"></div>
+      </article>
+
+      <article class="card success-account-card">
+        <div class="card-head"><div><h2>换绑完成账号</h2><p>成功窗口默认保持登录；重新获取 AT 会复用同一 Roxy 环境和新邮箱登录态，并立即更新导出结果。</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>新邮箱</th><th>AT 状态</th><th>Roxy 窗口</th><th>Profile</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="successAccountsBody"></tbody></table></div>
       </article>
     </section>
 

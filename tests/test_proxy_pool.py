@@ -161,15 +161,23 @@ class ProxyPoolTests(unittest.TestCase):
             def cleanup_profile(self, _opened):
                 events.append("cleanup")
 
+            def close_profile(self, profile_id):
+                events.append(f"close:{profile_id}")
+                return True
+
+            def delete_profile(self, profile_id):
+                events.append(f"delete:{profile_id}")
+                return True
+
         loaded = (FakeClient, lambda _opened: FakeDriver(), lambda _driver: None, None, None, None, lambda *_a, **_k: {})
-        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), patch.object(roxy_flow.settings, "KEEP_BROWSER_OPEN", False):
+        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded):
             with self.assertRaises(roxy_flow.ProxyFailure):
                 roxy_flow.perform_email_rebind(
                     old_email="old@example.com", new_email="new@example.com",
                     password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
                     api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
                 )
-        self.assertEqual(events, ["open:True", "quit", "cleanup"])
+        self.assertEqual(events, ["open:True", "quit", "close:p1", "delete:p1"])
 
 
 if __name__ == "__main__":

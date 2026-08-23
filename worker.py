@@ -12,6 +12,43 @@ import store
 logger = logging.getLogger(__name__)
 _LOCK = threading.RLock()
 _EXECUTORS: list[ThreadPoolExecutor] = []
+_ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-action")
+
+
+def _refresh_access_token(account_id: int) -> None:
+    account = store.get_success_account_context(account_id)
+    if not account:
+        store.fail_access_token_refresh(account_id, "成功账号不存在")
+        return
+    try:
+        result = roxy_flow.refresh_retained_access_token(
+            str(account.get("roxy_profile_id") or ""),
+            str(account.get("new_email") or account.get("current_email") or ""),
+        )
+        store.finish_access_token_refresh(account_id, result)
+    except Exception as exc:  # noqa: BLE001 - 操作结果必须回写页面状态
+        logger.exception("成功账号 #%s 重新获取 AT 失败", account_id)
+        store.fail_access_token_refresh(
+            account_id, f"{type(exc).__name__}: {str(exc)[:500]}",
+            browser_open=roxy_flow.retained_profile_is_connected(
+                str(account.get("roxy_profile_id") or ""),
+            ),
+        )
+
+
+def submit_access_token_refresh(account_id: int) -> dict:
+    account = store.begin_access_token_refresh(account_id)
+    if not account:
+        current = store.get_success_account_context(account_id)
+        if current and current.get("at_refresh_status") == "running":
+            return {"accepted": False, "busy": True, "error": "该账号正在重新获取 AT"}
+        return {"accepted": False, "busy": False, "error": "成功账号或保留的 Roxy 环境不存在"}
+    try:
+        _ACTION_EXECUTOR.submit(_refresh_access_token, int(account_id))
+    except Exception as exc:
+        store.fail_access_token_refresh(account_id, f"后台任务提交失败：{type(exc).__name__}: {exc}")
+        raise
+    return {"accepted": True, "account_id": int(account_id)}
 
 
 def _run(task_id: int) -> None:
