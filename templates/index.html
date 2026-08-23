@@ -46,7 +46,7 @@
       </div>
 
       <article class="card pairing-card">
-        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对</h2><p>勾选待换绑账号；替换邮箱按顺序绑定，换绑代理在任务开始时随机选择。</p></div><div class="actions"><label>并发 <input id="workers" type="number" min="1" max="10" value="2"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn success" id="startRebind">开始换绑</button></div></div>
+        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对</h2><p>勾选待换绑账号；替换邮箱按顺序绑定，换绑代理在任务开始时随机选择。登录/网络临时失败会按设置次数重新走流程；换绑确认后的新邮箱登录也会重新获取验证码和 AT。</p></div><div class="actions"><label>并发 <input id="workers" type="number" min="1" max="10" value="2"></label><label>自动重试 <input id="transientRetries" type="number" min="0" max="10" value="2"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn success" id="startRebind">开始换绑</button></div></div>
         <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectAll"></th><th>原邮箱</th><th>账号状态</th><th>一对一替换邮箱</th><th>操作</th></tr></thead><tbody id="pairBody"></tbody></table></div>
       </article>
 

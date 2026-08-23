@@ -116,6 +116,33 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertLess(events.index("close:profile-1"), events.index("delete:profile-1"))
         self.assertFalse(roxy_flow._RETAINED)
 
+    def test_replacement_login_retries_with_new_email_until_access_token_is_obtained(self):
+        events = []
+        progress_events = []
+        loaded, _driver, _client_box = self._loaded(events)
+        with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
+                patch.object(roxy_flow, "_complete_login", side_effect=[
+                    {"user": {"email": "old@example.com"}},
+                    TimeoutError("替换邮箱验证码已提交但未取得 ChatGPT accessToken"),
+                    {"user": {"email": "new@example.com"}, "accessToken": "at-new"},
+                ]) as complete_login, \
+                patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None), \
+                patch.object(roxy_flow, "_change_email_har_guided"), \
+                patch.object(roxy_flow, "_clear_login_state"), \
+                patch.object(roxy_flow.settings, "TRANSIENT_RETRY_DELAY", 0):
+            result = roxy_flow.perform_email_rebind(
+                old_email="old@example.com", new_email="new@example.com",
+                password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
+                max_relogin_retries=1,
+                progress=lambda stage, _message: progress_events.append(stage),
+            )
+
+        self.assertEqual(result["access_token"], "at-new")
+        self.assertEqual(complete_login.call_count, 3)
+        self.assertIn("relogin_new_retry", progress_events)
+        self.assertIn("profile-1", roxy_flow._RETAINED)
+
     def test_close_button_deletes_profile_after_service_restart(self):
         events = []
         loaded, _driver, _client_box = self._loaded(events)

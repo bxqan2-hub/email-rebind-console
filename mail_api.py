@@ -13,6 +13,14 @@ import settings
 
 _OTP_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 _PREFERRED_KEYS = {"code", "otp", "verification_code", "verificationcode", "passcode", "pin"}
+_HTML_CODE_RE = re.compile(
+    r"<[^>]*class=[\"'][^\"']*\bcode\b[^\"']*[\"'][^>]*>\s*(\d{6})\s*</",
+    re.I,
+)
+_HTML_SUBJECT_CODE_RE = re.compile(
+    r"(?:chatgpt|openai)[^<]{0,100}?(?:login\s+code|code)\s*(?:is|:)?\s*(\d{6})",
+    re.I,
+)
 
 
 def _strings(value: Any, key: str = ""):
@@ -44,12 +52,23 @@ def extract_otp(text: str) -> str | None:
             match = _OTP_RE.search(value)
             if match:
                 return match.group(1)
-    matches = _OTP_RE.findall(raw)
+    # 邮箱取码服务返回 HTML 时，先读邮件卡片的显式 code 节点/主题。
+    # 不能直接扫描整页：CSS 色值、UUID 和链接路径也会产生 6 位数字，
+    # 恰好靠近 ChatGPT 文本时会被误判成验证码。
+    html_code = _HTML_CODE_RE.search(raw)
+    if html_code:
+        return html_code.group(1)
+    html_subject = _HTML_SUBJECT_CODE_RE.search(re.sub(r"<[^>]+>", " ", raw))
+    if html_subject:
+        return html_subject.group(1)
+    visible = re.sub(r"(?is)<(style|script)\b.*?</\1>", " ", raw)
+    visible = re.sub(r"<[^>]+>", " ", visible)
+    matches = _OTP_RE.findall(visible)
     if not matches:
         return None
     for match in matches:
-        at = raw.find(match)
-        nearby = raw[max(0, at - 140):at + 140]
+        at = visible.find(match)
+        nearby = visible[max(0, at - 140):at + 140]
         if re.search(r"openai|chatgpt|verification|验证码|認証|인증|code|otp", nearby, re.I):
             return match
     return matches[0]
@@ -59,7 +78,12 @@ def read_current_otp(api_url: str, email: str, timeout: float = 8.0) -> str | No
     url = str(api_url or "").replace("{email}", str(email or ""))
     response = requests.get(
         url,
-        headers={"Accept": "application/json,text/plain,text/html,*/*", "User-Agent": "email-rebind-console/1.0"},
+        headers={
+            "Accept": "application/json,text/plain,text/html,*/*",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "User-Agent": "email-rebind-console/1.0",
+        },
         timeout=max(2.0, float(timeout or 8.0)),
         verify=settings.MAIL_VERIFY_TLS,
     )

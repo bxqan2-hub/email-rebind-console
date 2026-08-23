@@ -38,6 +38,7 @@ def create_app(*, recover: bool = True) -> Flask:
             "replacements": store.list_replacements(),
             "proxies": store.list_proxies(),
             "tasks": store.list_tasks(),
+            "settings": {"max_transient_retries": settings.MAX_TRANSIENT_RETRIES},
             "pool_name": "替换邮箱",
             "proxy_pool_name": "换绑代理",
         })
@@ -204,19 +205,33 @@ def create_app(*, recover: bool = True) -> Flask:
             workers = max(1, min(int(data.get("workers") or settings.DEFAULT_WORKERS), 10))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "workers 必须是 1~10 的整数"}), 400
+        try:
+            transient_retries = max(0, min(int(data.get("transient_retries", settings.MAX_TRANSIENT_RETRIES)), 10))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "自动重试次数必须是 0~10 的整数"}), 400
         if int(store.summary().get("proxy_available") or 0) < 1:
             return jsonify({"ok": False, "error": "换绑代理池没有可用代理，请先手动导入"}), 409
-        tasks = store.reserve_batch(ids)
+        tasks = store.reserve_batch(ids, max_transient_retries=transient_retries)
         if not tasks:
             return jsonify({"ok": False, "error": "没有可一对一配对的待换绑账号和替换邮箱"}), 409
         submitted = worker.submit_tasks(tasks, workers)
-        return jsonify({"ok": True, "submitted": submitted, "workers": workers, "tasks": tasks})
+        return jsonify({
+            "ok": True, "submitted": submitted, "workers": workers,
+            "transient_retries": transient_retries, "tasks": tasks,
+        })
 
     @app.post("/api/accounts/<int:account_id>/retry")
     def api_retry_failed_account(account_id: int):
         if int(store.summary().get("proxy_available") or 0) < 1:
             return jsonify({"ok": False, "error": "换绑代理池没有可用代理，请先重新启用或导入代理"}), 409
-        result = store.reserve_failed_account_retry(account_id)
+        data = request.get_json(silent=True) or {}
+        try:
+            transient_retries = max(0, min(int(data.get("transient_retries", settings.MAX_TRANSIENT_RETRIES)), 10))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "自动重试次数必须是 0~10 的整数"}), 400
+        result = store.reserve_failed_account_retry(
+            account_id, max_transient_retries=transient_retries,
+        )
         task = result.get("task")
         if not task:
             reason = result.get("reason")
@@ -228,7 +243,10 @@ def create_app(*, recover: bool = True) -> Flask:
                 return jsonify({"ok": False, "error": "该账号已有活动换绑任务"}), 409
             return jsonify({"ok": False, "error": "替换邮箱号池没有可用邮箱"}), 409
         submitted = worker.submit_tasks([task], 1)
-        return jsonify({"ok": True, "submitted": submitted, "task": task}), 202
+        return jsonify({
+            "ok": True, "submitted": submitted, "transient_retries": transient_retries,
+            "task": task,
+        }), 202
 
     @app.get("/api/tasks")
     def api_tasks():

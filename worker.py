@@ -93,6 +93,9 @@ def _run(task_id: int) -> None:
         account = context["account"]
         replacement = context["replacement"]
         attempt = int(task.get("attempt") or 1)
+        retry_limit = max(0, min(
+            int(task.get("max_transient_retries", settings.MAX_TRANSIENT_RETRIES) or 0), 10,
+        ))
         if active_proxy is None:
             if proxy_attempt >= settings.MAX_PROXY_ATTEMPTS:
                 store.finish_failure(
@@ -148,6 +151,7 @@ def _run(task_id: int) -> None:
                 proxy_url=str(active_proxy.get("proxy_url") or ""),
                 progress=progress,
                 proxy_verified=proxy_verified,
+                max_relogin_retries=retry_limit,
             )
             store.finish_success(current_task_id, result)
             return
@@ -186,7 +190,7 @@ def _run(task_id: int) -> None:
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
             if _should_auto_retry(task, exc):
                 rotation = store.retry_transient_failure(
-                    current_task_id, message, settings.MAX_TRANSIENT_RETRIES,
+                    current_task_id, message, retry_limit,
                 )
                 next_task = rotation.get("next_task")
                 if next_task:

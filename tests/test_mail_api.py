@@ -11,6 +11,16 @@ class MailApiTests(unittest.TestCase):
         body = json.dumps({"messages": [{"subject": "Order 123456"}], "verification_code": "654321"})
         self.assertEqual(mail_api.extract_otp(body), "654321")
 
+    def test_extract_otp_reads_latest_mail_card_before_css_and_uuid_numbers(self):
+        body = '''<style>.x{color:#123456}</style>
+        <a class="mail"><strong>ChatGPT</strong><span class="code">045542</span></a>
+        <a class="mail"><strong>OpenAI</strong><span class="code">527593</span></a>'''
+        self.assertEqual(mail_api.extract_otp(body), "045542")
+
+    def test_extract_otp_reads_openai_subject_when_code_node_is_missing(self):
+        body = "<div>OpenAI</div><div>Your OpenAI code is 527593</div>"
+        self.assertEqual(mail_api.extract_otp(body), "527593")
+
     @patch("mail_api.requests.get")
     def test_read_current_otp_uses_configured_tls_verification(self, get: Mock):
         response = Mock(text='{"otp":"112233"}')

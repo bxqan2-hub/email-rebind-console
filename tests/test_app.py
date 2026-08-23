@@ -110,10 +110,15 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(client.post("/api/proxies/import", json={"text": "http://user:pass@proxy.example:8080"}).status_code, 200)
                 preview = client.post("/api/pairs/preview", json={"account_ids": []}).get_json()
                 self.assertEqual(preview["pairs"][0]["new_email"], "new@example.com")
-                started = client.post("/api/rebind/start", json={"account_ids": [], "workers": 2})
+                started = client.post(
+                    "/api/rebind/start",
+                    json={"account_ids": [], "workers": 2, "transient_retries": 4},
+                )
                 self.assertEqual(started.status_code, 200)
                 self.assertEqual(started.get_json()["submitted"], 1)
+                self.assertEqual(started.get_json()["transient_retries"], 4)
                 task = store.list_tasks()[0]
+                self.assertEqual(task["max_transient_retries"], 4)
                 store.finish_success(task["id"], {
                     "email": "new@example.com", "access_token": "at-new",
                     "roxy_profile_id": "profile-1",

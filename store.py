@@ -607,7 +607,11 @@ def preview_pairs(account_ids: Iterable[int] | None = None) -> list[dict]:
         ]
 
 
-def reserve_batch(account_ids: Iterable[int] | None = None) -> list[dict]:
+def reserve_batch(
+    account_ids: Iterable[int] | None = None,
+    *,
+    max_transient_retries: int | None = None,
+) -> list[dict]:
     pairs = preview_pairs(account_ids)
     if not pairs:
         return []
@@ -638,6 +642,8 @@ def reserve_batch(account_ids: Iterable[int] | None = None) -> list[dict]:
                 "message": "已完成一对一占用，等待 Roxy 浏览器",
                 "created_at": now,
             }
+            if max_transient_retries is not None:
+                task["max_transient_retries"] = max(0, min(int(max_transient_retries), 10))
             tasks.append(task)
             created.append(dict(task))
             account.update({"status": "queued", "active_task_id": task["id"], "updated_at": now})
@@ -651,7 +657,11 @@ def reserve_batch(account_ids: Iterable[int] | None = None) -> list[dict]:
         return created
 
 
-def reserve_failed_account_retry(account_id: int) -> dict:
+def reserve_failed_account_retry(
+    account_id: int,
+    *,
+    max_transient_retries: int | None = None,
+) -> dict:
     """为一个已失败账号建立可追溯的人工重试任务。"""
     with _LOCK:
         accounts = _read(_ACCOUNTS)
@@ -698,6 +708,8 @@ def reserve_failed_account_retry(account_id: int) -> dict:
             "created_at": now,
             "updated_at": now,
         }
+        if max_transient_retries is not None:
+            task["max_transient_retries"] = max(0, min(int(max_transient_retries), 10))
         if previous:
             task["root_task_id"] = int(previous.get("root_task_id") or previous.get("id") or 0)
             task["retry_of_task_id"] = int(previous.get("id") or 0)
@@ -1180,6 +1192,10 @@ def retry_transient_failure(task_id: int, error: str, max_retries: int) -> dict:
             "message": f"第 {next_attempt} 次尝试：临时故障自动重试，继续使用当前替换邮箱",
             "created_at": now, "updated_at": now,
         }
+        if previous.get("max_transient_retries") is not None:
+            next_task["max_transient_retries"] = max(
+                0, min(int(previous.get("max_transient_retries") or 0), 10)
+            )
         previous.update({
             "status": "failed", "stage": "transient_failed", "message": clean_error,
             "error": clean_error, "retryable": True, "auto_retry_status": "scheduled",
