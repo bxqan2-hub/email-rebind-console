@@ -11,10 +11,15 @@ class LauncherTests(unittest.TestCase):
         text = raw.decode("ascii")
         self.assertIn('cd /d "%~dp0"', text)
         self.assertIn('set "EMAIL_REBIND_PORT=5092"', text)
+        self.assertIn('set "APP_URL=http://127.0.0.1:5092/"', text)
+        self.assertIn('set "HEALTH_URL=http://127.0.0.1:5092/health"', text)
         self.assertIn('pythonw.exe', text)
-        self.assertIn('findstr ":5092"', text)
-        self.assertIn('if errorlevel 1 start "" "%PYTHONW%"', text)
-        self.assertIn('start "" "http://127.0.0.1:5092/"', text)
+        self.assertIn('call :healthcheck', text)
+        self.assertIn('Invoke-WebRequest', text)
+        self.assertIn('for /l %%i in (1,1,30)', text)
+        self.assertIn('Start-Sleep -Seconds 1', text)
+        self.assertIn('goto :open', text)
+        self.assertIn('start "" "%APP_URL%"', text)
 
     def test_stop_bat_targets_the_same_port(self):
         text = Path("stop.bat").read_text(encoding="utf-8")
