@@ -18,9 +18,6 @@ MAIN_SITE_PATH = Path(
 HOST = os.getenv("EMAIL_REBIND_HOST", "127.0.0.1")
 PORT = int(os.getenv("EMAIL_REBIND_PORT", "5091"))
 DEFAULT_WORKERS = max(1, int(os.getenv("EMAIL_REBIND_WORKERS", "2")))
-# 可见 Roxy 窗口尺寸；先放大再居中，减少账号信息和检测页面被折叠到滚动区的情况。
-ROXY_WINDOW_WIDTH = max(1024, min(int(os.getenv("EMAIL_REBIND_ROXY_WINDOW_WIDTH", "1500")), 2400))
-ROXY_WINDOW_HEIGHT = max(720, min(int(os.getenv("EMAIL_REBIND_ROXY_WINDOW_HEIGHT", "950")), 1600))
 OTP_MAX_WAIT = max(30, int(os.getenv("EMAIL_REBIND_OTP_MAX_WAIT", "150")))
 OTP_POLL_INTERVAL = max(1.0, float(os.getenv("EMAIL_REBIND_OTP_POLL_INTERVAL", "3")))
 MAIL_VERIFY_TLS = os.getenv("EMAIL_REBIND_MAIL_VERIFY_TLS", "1").strip().lower() not in {"0", "false", "no"}

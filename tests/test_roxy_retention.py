@@ -9,14 +9,6 @@ import roxy_flow
 class FakeDriver:
     def __init__(self, events):
         self.events = events
-        self.window_size = {"width": 900, "height": 650}
-
-    def get_window_size(self):
-        return dict(self.window_size)
-
-    def set_window_size(self, width, height):
-        self.window_size = {"width": width, "height": height}
-        self.events.append(f"window:{width}x{height}")
 
     def set_page_load_timeout(self, _value):
         pass
@@ -75,16 +67,6 @@ class RoxyRetentionTests(unittest.TestCase):
             lambda *_a, **_k: {"ip": "203.0.113.10", "country": "US"},
         )
         return loaded, driver, client_box
-
-    def test_visible_roxy_window_is_enlarged_before_centering(self):
-        events = []
-        driver = FakeDriver(events)
-        with patch.object(roxy_flow.settings, "ROXY_WINDOW_WIDTH", 1500), \
-                patch.object(roxy_flow.settings, "ROXY_WINDOW_HEIGHT", 950):
-            roxy_flow._enlarge_browser_window(driver)
-
-        self.assertEqual(driver.window_size, {"width": 1500, "height": 950})
-        self.assertIn("window:1500x950", events)
 
     def test_success_keeps_logged_in_window_and_close_button_deletes_profile(self):
         events = []

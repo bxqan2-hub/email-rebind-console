@@ -25,7 +25,7 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('for /l %%i in (1,1,30)', text)
         self.assertIn('Start-Sleep -Seconds 1', text)
         self.assertIn('goto :open', text)
-        self.assertIn('start "" /MAX "%APP_URL%"', text)
+        self.assertIn('start "" "%APP_URL%"', text)
         self.assertNotIn('127.0.0.1:5092', text)
         self.assertNotIn('127.0.0.2', text)
 
