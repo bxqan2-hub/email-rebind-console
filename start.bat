@@ -2,8 +2,9 @@
 setlocal
 cd /d "%~dp0"
 set "EMAIL_REBIND_PORT=5092"
-set "APP_URL=http://127.0.0.1:5092/"
-set "HEALTH_URL=http://127.0.0.1:5092/health"
+set "APP_HOST=127.0.0.1"
+set "APP_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/"
+set "HEALTH_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/health"
 set "PYTHONW=C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\pythonw.exe"
 if not exist "%PYTHONW%" (
   echo Python windowless runtime not found: %PYTHONW%
@@ -13,7 +14,17 @@ if not exist "%PYTHONW%" (
 call :healthcheck
 if not errorlevel 1 goto :open
 
-start "" "%PYTHONW%" "%~dp0app.py"
+call :stale_listener
+if errorlevel 1 goto :host_selected
+rem 127.0.0.1:%EMAIL_REBIND_PORT% has a dead listener; use another loopback address on the same port.
+set "APP_HOST=127.0.0.2"
+set "EMAIL_REBIND_HOST=127.0.0.2"
+set "APP_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/"
+set "HEALTH_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/health"
+:host_selected
+set "EMAIL_REBIND_HOST=%APP_HOST%"
+call :listener_is_live
+if errorlevel 1 start "" "%PYTHONW%" "%~dp0app.py"
 for /l %%i in (1,1,30) do (
   call :healthcheck
   if not errorlevel 1 goto :open
@@ -31,4 +42,12 @@ exit /b 0
 
 :healthcheck
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -UseBasicParsing -Uri '%HEALTH_URL%' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+exit /b %errorlevel%
+
+:stale_listener
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$entries = @(Get-NetTCPConnection -State Listen -LocalAddress '127.0.0.1' -LocalPort %EMAIL_REBIND_PORT% -ErrorAction SilentlyContinue); if ($entries.Count -eq 0) { exit 1 }; foreach ($entry in $entries) { if ($null -eq (Get-Process -Id $entry.OwningProcess -ErrorAction SilentlyContinue)) { exit 0 } }; exit 1" >nul 2>&1
+exit /b %errorlevel%
+
+:listener_is_live
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$entries = @(Get-NetTCPConnection -State Listen -LocalAddress '%APP_HOST%' -LocalPort %EMAIL_REBIND_PORT% -ErrorAction SilentlyContinue); foreach ($entry in $entries) { if ($null -ne (Get-Process -Id $entry.OwningProcess -ErrorAction SilentlyContinue)) { exit 0 } }; exit 1" >nul 2>&1
 exit /b %errorlevel%
