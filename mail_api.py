@@ -21,6 +21,10 @@ _HTML_SUBJECT_CODE_RE = re.compile(
     r"(?:chatgpt|openai)[^<]{0,100}?(?:login\s+code|code)\s*(?:is|:)?\s*(\d{6})",
     re.I,
 )
+_EMBEDDED_HTML_RE = re.compile(
+    r"\b(?:htmlContent|emailHtml|messageHtml|mailHtml)\s*=\s*\"((?:\\.|[^\"\\])*)\"",
+    re.I | re.S,
+)
 
 
 def _strings(value: Any, key: str = ""):
@@ -32,6 +36,42 @@ def _strings(value: Any, key: str = ""):
             yield from _strings(child, key)
     elif value is not None:
         yield key.lower(), str(value)
+
+
+def _decode_embedded_html(raw: str):
+    """解码邮件服务把正文放进 JS 字符串的页面。"""
+    for match in _EMBEDDED_HTML_RE.finditer(str(raw or "")):
+        encoded = match.group(1)
+        try:
+            decoded = json.loads(f'"{encoded}"')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            try:
+                decoded = bytes(encoded, "utf-8").decode("unicode_escape")
+            except (UnicodeDecodeError, ValueError):
+                continue
+        if "<" in decoded:
+            yield decoded
+
+
+def _extract_html_otp(raw: str) -> str | None:
+    """从一个完整 HTML 邮件正文中提取验证码，先排除 CSS/脚本数字。"""
+    html_code = _HTML_CODE_RE.search(raw)
+    if html_code:
+        return html_code.group(1)
+    html_subject = _HTML_SUBJECT_CODE_RE.search(re.sub(r"<[^>]+>", " ", raw))
+    if html_subject:
+        return html_subject.group(1)
+    visible = re.sub(r"(?is)<(style|script)\b.*?</\1>", " ", raw)
+    visible = re.sub(r"<[^>]+>", " ", visible)
+    matches = _OTP_RE.findall(visible)
+    if not matches:
+        return None
+    for match in matches:
+        at = visible.find(match)
+        nearby = visible[max(0, at - 180):at + 180]
+        if re.search(r"openai|chatgpt|verification|验证码|認証|인증|code|otp", nearby, re.I):
+            return match
+    return matches[0]
 
 
 def extract_otp(text: str) -> str | None:
@@ -52,26 +92,16 @@ def extract_otp(text: str) -> str | None:
             match = _OTP_RE.search(value)
             if match:
                 return match.group(1)
+    # 部分取码服务把真实邮件正文放在 script 的 htmlContent JS 字符串中，
+    # 外层页面本身只有标题和 iframe；必须先解码内层正文再识别验证码。
+    for embedded in _decode_embedded_html(raw):
+        code = _extract_html_otp(embedded)
+        if code:
+            return code
     # 邮箱取码服务返回 HTML 时，先读邮件卡片的显式 code 节点/主题。
     # 不能直接扫描整页：CSS 色值、UUID 和链接路径也会产生 6 位数字，
     # 恰好靠近 ChatGPT 文本时会被误判成验证码。
-    html_code = _HTML_CODE_RE.search(raw)
-    if html_code:
-        return html_code.group(1)
-    html_subject = _HTML_SUBJECT_CODE_RE.search(re.sub(r"<[^>]+>", " ", raw))
-    if html_subject:
-        return html_subject.group(1)
-    visible = re.sub(r"(?is)<(style|script)\b.*?</\1>", " ", raw)
-    visible = re.sub(r"<[^>]+>", " ", visible)
-    matches = _OTP_RE.findall(visible)
-    if not matches:
-        return None
-    for match in matches:
-        at = visible.find(match)
-        nearby = visible[max(0, at - 140):at + 140]
-        if re.search(r"openai|chatgpt|verification|验证码|認証|인증|code|otp", nearby, re.I):
-            return match
-    return matches[0]
+    return _extract_html_otp(raw)
 
 
 def read_current_otp(api_url: str, email: str, timeout: float = 8.0) -> str | None:

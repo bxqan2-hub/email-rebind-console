@@ -40,6 +40,10 @@ class ProxyFailure(RuntimeError):
     """换绑代理在创建 Roxy 环境前检测失败；工作线程应隔离并换下一条。"""
 
 
+class TaskStopRequested(RuntimeError):
+    """用户点击停止后，中断当前协议流程并由 worker 安全释放资源。"""
+
+
 class _HarApiUnavailable(RuntimeError):
     """抓包确认的换绑 API 在当前页面版本不可用；由工作线程关闭窗口并重试。"""
 
@@ -397,6 +401,7 @@ def _change_email_via_har_api(
     new_email: str,
     api_url: str,
     progress: Callable[[str, str], None],
+    stop_check: Callable[[], bool] | None = None,
 ) -> None:
     """按已验证 HAR 时序执行 eligibility → begin → verify → logout。"""
     account_id = _session_account_id(session)
@@ -405,6 +410,9 @@ def _change_email_via_har_api(
         raise _HarApiUnavailable("登录 session 中没有 chatgpt_account_id")
     if not access_token:
         raise _HarApiUnavailable("登录 session 中没有 accessToken")
+    stop_check = stop_check or (lambda: False)
+    if stop_check():
+        raise TaskStopRequested("用户已请求停止")
 
     progress("check_email_eligibility", "检查当前账号的邮箱换绑资格")
     eligibility = _browser_json_request(
@@ -435,6 +443,8 @@ def _change_email_via_har_api(
         pass
 
     progress("submit_new_email", "提交替换邮箱并请求新邮箱验证码")
+    if stop_check():
+        raise TaskStopRequested("用户已请求停止")
     begin_body = {"email": new_email}
     if remove_social_subs:
         begin_body["remove_social_subs"] = True
@@ -467,13 +477,18 @@ def _change_email_via_har_api(
         code = mail_api.wait_for_new_otp(
             api_url, new_email, previous=previous_otp,
             max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
+            stop_check=stop_check,
         )
+    except TaskStopRequested:
+        raise
     except Exception as exc:
         raise ReplacementEmailFailure(
             "otp_unavailable",
             f"替换邮箱未取得新验证码：{type(exc).__name__}: {str(exc)[:240]}",
         ) from exc
 
+    if stop_check():
+        raise TaskStopRequested("用户已请求停止")
     progress("submit_new_email_otp", "提交替换邮箱验证码")
     verify_body = {"email": new_email, "code": code}
     if remove_social_subs:
@@ -516,11 +531,12 @@ def _change_email_har_guided(
     new_email: str,
     api_url: str,
     progress: Callable[[str, str], None],
+    stop_check: Callable[[], bool] | None = None,
 ) -> None:
     """只执行已验证的同源 API 换绑协议；API 不可用时直接抛出，由 worker 重试。"""
     _change_email_via_har_api(
         driver, session=session, new_email=new_email,
-        api_url=api_url, progress=progress,
+        api_url=api_url, progress=progress, stop_check=stop_check,
     )
 
 
@@ -535,13 +551,17 @@ def _complete_login(
     email_api_url: str = "",
     previous_email_otp: str | None = None,
     email_label: str = "邮箱",
+    stop_check: Callable[[], bool] | None = None,
 ) -> dict:
+    stop_check = stop_check or (lambda: False)
     deadline = time.monotonic() + 120
     password_sent = False
     totp_sent_at = 0.0
     email_otp_sent = False
     otp_hint_since = 0.0
     while time.monotonic() < deadline:
+        if stop_check():
+            raise TaskStopRequested("用户已请求停止")
         current = str(getattr(driver, "current_url", "") or "")
         if "chatgpt.com" in current:
             try:
@@ -607,13 +627,15 @@ def _complete_login(
                 code = mail_api.wait_for_new_otp(
                     email_api_url, email, previous=previous_email_otp,
                     max_wait=settings.OTP_MAX_WAIT, interval=settings.OTP_POLL_INTERVAL,
-                    stop_check=lambda: _visible_input(driver, [
+                    stop_check=lambda: stop_check() or _visible_input(driver, [
                         'input[name="verification_code"]', 'input[autocomplete="one-time-code"]',
                         'input[inputmode="numeric"]', 'input[name="code"]', 'input[type="tel"]',
                         'input[id*="verification" i]', 'input[name*="verification" i]',
                         'input[aria-label*="code" i]',
                     ]) is None,
                 )
+            except TaskStopRequested:
+                raise
             except Exception as exc:
                 raise RuntimeError(
                     f"{email_label}登录验证码获取失败：{type(exc).__name__}: {str(exc)[:300]}"
@@ -658,12 +680,16 @@ def _login_with_replacement_email(
     progress: Callable[[str, str], None],
     api_url: str,
     max_relogin_retries: int | None = None,
+    stop_check: Callable[[], bool] | None = None,
 ) -> tuple[dict, str, str]:
     """换绑提交后只用新邮箱 API 登录；验证码/会话失败时重新走登录页。"""
     retries = settings.MAX_TRANSIENT_RETRIES if max_relogin_retries is None else max_relogin_retries
     total_attempts = max(1, min(int(retries or 0), 10) + 1)
     last_error: Exception | None = None
+    stop_check = stop_check or (lambda: False)
     for login_attempt in range(1, total_attempts + 1):
+        if stop_check():
+            raise TaskStopRequested("用户已请求停止")
         progress(
             "relogin_new",
             f"第 {login_attempt}/{total_attempts} 次使用替换邮箱重新登录：{email}",
@@ -694,6 +720,7 @@ def _login_with_replacement_email(
                 email_api_url=api_url,
                 previous_email_otp=previous_otp,
                 email_label="替换邮箱",
+                stop_check=stop_check,
             )
             observed = _session_email(session)
             if (observed or "").lower() != email.lower():
@@ -703,6 +730,8 @@ def _login_with_replacement_email(
                 raise RuntimeError("换绑后重新登录成功，但 /api/auth/session 未返回 accessToken")
             return session, observed, access_token
         except Exception as exc:
+            if isinstance(exc, TaskStopRequested):
+                raise
             last_error = exc
             if login_attempt >= total_attempts:
                 break
@@ -711,7 +740,11 @@ def _login_with_replacement_email(
                 f"第 {login_attempt} 次替换邮箱登录失败，将重新打开登录页获取新验证码：{type(exc).__name__}: {str(exc)[:220]}",
             )
             if settings.TRANSIENT_RETRY_DELAY:
-                time.sleep(settings.TRANSIENT_RETRY_DELAY)
+                deadline = time.monotonic() + settings.TRANSIENT_RETRY_DELAY
+                while time.monotonic() < deadline:
+                    if stop_check():
+                        raise TaskStopRequested("用户已请求停止")
+                    time.sleep(min(0.25, deadline - time.monotonic()))
     assert last_error is not None
     raise last_error
 
@@ -726,9 +759,11 @@ def perform_replacement_login(
     progress: Callable[[str, str], None] | None = None,
     proxy_verified: Callable[[dict], None] | None = None,
     max_relogin_retries: int | None = None,
+    stop_check: Callable[[], bool] | None = None,
 ) -> dict:
     """已确认换绑后的补救流程：只登录替换邮箱并保留成功窗口。"""
     progress = progress or (lambda _stage, _message: None)
+    stop_check = stop_check or (lambda: False)
     RoxyBrowserClient, build_driver, center_window, fetch_session, safe_get, submit_email, probe_driver_exit = _load_main_roxy()
     clean_proxy = str(proxy_url or "").strip()
     if not clean_proxy:
@@ -775,7 +810,10 @@ def perform_replacement_login(
                 progress=progress,
                 api_url=api_url,
                 max_relogin_retries=max_relogin_retries,
+                stop_check=stop_check,
             )
+        except TaskStopRequested:
+            raise
         except RebindOutcomeUnknown:
             raise
         except Exception as exc:
@@ -830,9 +868,11 @@ def perform_email_rebind(
     progress: Callable[[str, str], None] | None = None,
     proxy_verified: Callable[[dict], None] | None = None,
     max_relogin_retries: int | None = None,
+    stop_check: Callable[[], bool] | None = None,
 ) -> dict:
     """执行完整闭环：旧邮箱登录 → Settings/Account 换绑 → 新邮箱登录 → 读取新 AT。"""
     progress = progress or (lambda _stage, _message: None)
+    stop_check = stop_check or (lambda: False)
     RoxyBrowserClient, build_driver, center_window, fetch_session, safe_get, submit_email, probe_driver_exit = _load_main_roxy()
     clean_proxy = str(proxy_url or "").strip()
     if not clean_proxy:
@@ -885,6 +925,7 @@ def perform_email_rebind(
             driver, old_email, password, totp_secret, fetch_session, progress,
             email_api_url=source_api_url, previous_email_otp=previous_old_login_otp,
             email_label="原邮箱",
+            stop_check=stop_check,
         )
         observed_old = _session_email(old_session)
         if observed_old and observed_old.lower() != old_email.lower():
@@ -896,6 +937,7 @@ def perform_email_rebind(
             new_email=new_email,
             api_url=api_url,
             progress=progress,
+            stop_check=stop_check,
         )
 
         try:
@@ -910,7 +952,10 @@ def perform_email_rebind(
                 progress=progress,
                 api_url=api_url,
                 max_relogin_retries=max_relogin_retries,
+                stop_check=stop_check,
             )
+        except TaskStopRequested:
+            raise
         except RebindOutcomeUnknown:
             raise
         except Exception as exc:

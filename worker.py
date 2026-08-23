@@ -92,8 +92,12 @@ def _run(task_id: int) -> None:
         task = context["task"]
         account = context["account"]
         replacement = context["replacement"]
+        if store.is_task_stop_requested(current_task_id):
+            store.finish_stopped(current_task_id)
+            return
         attempt = int(task.get("attempt") or 1)
         login_only = bool(task.get("login_only"))
+        change_confirmed = bool(login_only or task.get("email_change_confirmed"))
         retry_limit = max(0, min(
             int(task.get("max_transient_retries", settings.MAX_TRANSIENT_RETRIES) or 0), 10,
         ))
@@ -129,13 +133,22 @@ def _run(task_id: int) -> None:
         )
 
         def progress(stage: str, message: str) -> None:
+            nonlocal change_confirmed
+            if stage == "changed":
+                change_confirmed = True
+            if store.is_task_stop_requested(current_task_id):
+                raise roxy_flow.TaskStopRequested("用户已请求停止")
             # 同步本轮真实阶段，避免前一条代理失败留下的 proxy_failed 阶段
             # 阻断 submit_new_email 临时故障的既有自动重试机制。
             task["stage"] = stage
             store.update_task(
                 current_task_id, status="running", stage=stage,
                 message=f"第 {attempt} 次邮箱尝试 / 第 {proxy_attempt} 条代理：{message}",
+                email_change_confirmed=change_confirmed,
             )
+
+        def stop_check() -> bool:
+            return store.is_task_stop_requested(current_task_id)
 
         def proxy_verified(exit_geo: dict) -> None:
             store.mark_proxy_success(
@@ -154,6 +167,7 @@ def _run(task_id: int) -> None:
                     progress=progress,
                     proxy_verified=proxy_verified,
                     max_relogin_retries=retry_limit,
+                    stop_check=stop_check,
                 )
             else:
                 result = roxy_flow.perform_email_rebind(
@@ -167,10 +181,18 @@ def _run(task_id: int) -> None:
                     progress=progress,
                     proxy_verified=proxy_verified,
                     max_relogin_retries=retry_limit,
+                    stop_check=stop_check,
                 )
             store.finish_success(current_task_id, result)
             return
+        except roxy_flow.TaskStopRequested as exc:
+            logger.info("换绑任务 #%s 收到停止请求：%s", current_task_id, exc)
+            store.finish_stopped(current_task_id)
+            return
         except roxy_flow.ProxyFailure as exc:
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
             logger.warning(
                 "换绑代理检测失败，准备自动切换：task=%s proxy_id=%s reason=%s",
@@ -188,6 +210,9 @@ def _run(task_id: int) -> None:
             continue
         except roxy_flow.ReplacementEmailFailure as exc:
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
             if login_only:
                 logger.error("已换绑账号补救登录失败：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
                 store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
@@ -202,11 +227,17 @@ def _run(task_id: int) -> None:
             current_task_id = int(next_task["id"])
         except roxy_flow.RebindOutcomeUnknown as exc:
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
             logger.error("换绑结果待人工核验：task=%s new_email=%s reason=%s", current_task_id, exc.new_email, message)
             store.finish_review_failure(current_task_id, exc.new_email, message)
             return
         except Exception as exc:  # noqa: BLE001 - 任务终态需持久化完整异常类型
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
             if login_only:
                 logger.error("已换绑账号补救登录失败：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
                 store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
@@ -225,7 +256,12 @@ def _run(task_id: int) -> None:
                     allow_proxy_reuse = True
                     current_task_id = int(next_task["id"])
                     if settings.TRANSIENT_RETRY_DELAY:
-                        time.sleep(settings.TRANSIENT_RETRY_DELAY)
+                        deadline = time.monotonic() + settings.TRANSIENT_RETRY_DELAY
+                        while time.monotonic() < deadline:
+                            if store.is_task_stop_requested(current_task_id):
+                                store.finish_stopped(current_task_id)
+                                return
+                            time.sleep(min(0.25, deadline - time.monotonic()))
                     continue
                 if rotation.get("reason") == "attempt_limit":
                     logger.error(

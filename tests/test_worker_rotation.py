@@ -216,6 +216,28 @@ class WorkerRotationTests(unittest.TestCase):
                 self.assertEqual(kwargs["password"], "")
                 self.assertEqual(kwargs["totp_secret"], "")
 
+    def test_worker_honors_stop_request_without_starting_roxy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = (
+                patch.object(store, "_ACCOUNTS", root / "accounts.json"),
+                patch.object(store, "_REPLACEMENTS", root / "replacements.json"),
+                patch.object(store, "_TASKS", root / "tasks.json"),
+                patch.object(store, "_PROXIES", root / "proxies.json"),
+            )
+            with storage[0], storage[1], storage[2], storage[3], \
+                    patch.object(worker.roxy_flow, "perform_email_rebind") as perform:
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                task = store.reserve_batch()[0]
+                store.request_task_stop(task["id"])
+
+                worker._run(task["id"])
+
+                perform.assert_not_called()
+                self.assertEqual(store.list_tasks()[0]["status"], "stopped")
+                self.assertEqual(store.list_accounts()[0]["status"], "ready")
+
     def test_review_login_task_uses_existing_replacement_and_finishes_successfully(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

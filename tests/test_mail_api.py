@@ -21,6 +21,15 @@ class MailApiTests(unittest.TestCase):
         body = "<div>OpenAI</div><div>Your OpenAI code is 527593</div>"
         self.assertEqual(mail_api.extract_otp(body), "527593")
 
+    def test_extract_otp_decodes_mail_body_embedded_in_javascript(self):
+        body = r'''<style>.theme{color:#495057}</style>
+        <div>Your temporary ChatGPT login code</div>
+        <script>
+          var htmlContent = "<html><body><p>Enter this temporary verification code to continue:</p><p style=\"font-size:24px\">830982</p></body></html>";
+          document.write(htmlContent);
+        </script>'''
+        self.assertEqual(mail_api.extract_otp(body), "830982")
+
     @patch("mail_api.requests.get")
     def test_read_current_otp_uses_configured_tls_verification(self, get: Mock):
         response = Mock(text='{"otp":"112233"}')

@@ -277,6 +277,22 @@ def create_app(*, recover: bool = True) -> Flask:
             "task": task,
         }), 202
 
+    @app.post("/api/tasks/<int:task_id>/stop")
+    def api_stop_task(task_id: int):
+        result = store.request_task_stop(task_id)
+        if result.get("reason") == "not_found":
+            return jsonify({"ok": False, "error": "任务不存在", **result}), 404
+        if result.get("reason") == "not_active":
+            return jsonify({"ok": False, "error": "任务已经结束，不能停止", **result}), 409
+        return jsonify({"ok": True, "stop_requested": True, **result}), 202
+
+    @app.post("/api/accounts/<int:account_id>/stop")
+    def api_stop_account(account_id: int):
+        result = store.request_account_stop(account_id)
+        if result.get("reason") == "not_active":
+            return jsonify({"ok": False, "error": "该账号没有正在运行的换绑任务", **result}), 409
+        return jsonify({"ok": True, "stop_requested": True, **result}), 202
+
     @app.get("/api/tasks")
     def api_tasks():
         return jsonify({"ok": True, "items": store.list_tasks(), "summary": store.summary()})

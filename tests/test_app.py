@@ -258,7 +258,30 @@ class AppTests(unittest.TestCase):
         self.assertIn("data-retry-account", script)
         self.assertIn("自动重试中", script)
         self.assertIn("失败重试", script)
+        self.assertIn("data-stop-task", script)
+        self.assertIn("/api/tasks/${id}/stop", script)
+        self.assertIn("stopped", script)
         self.assertIn("btn danger", script)
+
+    def test_stop_task_route_requests_stop_for_active_account(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            patches = (
+                patch.object(store, "_ACCOUNTS", root / "accounts.json"),
+                patch.object(store, "_REPLACEMENTS", root / "replacements.json"),
+                patch.object(store, "_TASKS", root / "tasks.json"),
+                patch.object(store, "_PROXIES", root / "proxies.json"),
+            )
+            with patches[0], patches[1], patches[2], patches[3]:
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                task = store.reserve_batch()[0]
+                client = app.create_app(recover=False).test_client()
+
+                response = client.post(f"/api/tasks/{task['id']}/stop")
+                self.assertEqual(response.status_code, 202)
+                self.assertTrue(response.get_json()["stop_requested"])
+                self.assertTrue(store.is_task_stop_requested(task["id"]))
 
     def test_failed_account_retry_route_submits_traced_task(self):
         with tempfile.TemporaryDirectory() as tmp:

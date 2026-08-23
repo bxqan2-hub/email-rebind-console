@@ -137,6 +137,43 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(replacement_result["task_id"], task["id"])
                 self.assertEqual(proxy_result["task_id"], task["id"])
 
+    def test_stop_active_task_releases_uncommitted_replacement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                task = store.reserve_batch()[0]
+
+                requested = store.request_task_stop(task["id"])
+                self.assertEqual(requested["reason"], "requested")
+                self.assertTrue(store.is_task_stop_requested(task["id"]))
+                stopped = store.finish_stopped(task["id"])
+
+                self.assertEqual(stopped["status"], "stopped")
+                self.assertEqual(store.list_tasks()[0]["stage"], "stopped")
+                self.assertEqual(store.list_accounts()[0]["status"], "ready")
+                self.assertEqual(store.list_replacements()[0]["status"], "available")
+
+    def test_stop_after_change_confirmation_freezes_account_for_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                task = store.reserve_batch()[0]
+                store.update_task(task["id"], stage="changed", email_change_confirmed=True)
+                store.request_task_stop(task["id"])
+
+                stopped = store.finish_stopped(task["id"])
+                self.assertEqual(stopped["stage"], "stopped_review")
+                self.assertEqual(store.list_accounts()[0]["status"], "review")
+                self.assertEqual(store.list_replacements()[0]["status"], "review")
+
     def test_delete_all_proxies_keeps_active_task_proxy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

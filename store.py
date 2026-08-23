@@ -523,7 +523,7 @@ def delete_finished_task(task_id: int) -> dict:
         row = next((item for item in rows if int(item.get("id") or 0) == int(task_id)), None)
         if not row:
             return {"deleted": False, "reason": "not_found"}
-        if row.get("status") not in {"success", "failed", "review"}:
+        if row.get("status") not in {"success", "failed", "review", "stopped"}:
             return {"deleted": False, "reason": "not_finished"}
         rows.remove(row)
         _remove_task_links(rows, {int(task_id)})
@@ -545,10 +545,10 @@ def clear_failed_tasks() -> dict:
 
 
 def clear_finished_tasks() -> dict:
-    """批量清理成功、失败和待核验任务日志，活动任务保持锁定。"""
+    """批量清理成功、失败、停止和待核验任务日志，活动任务保持锁定。"""
     with _LOCK:
         rows = _read(_TASKS)
-        finished = {"success", "failed", "review"}
+        finished = {"success", "failed", "review", "stopped"}
         removed = [row for row in rows if row.get("status") in finished]
         removed_ids = {int(row.get("id") or 0) for row in removed}
         kept = [row for row in rows if row.get("status") not in finished]
@@ -582,6 +582,7 @@ def summary() -> dict:
             "accounts_review": sum(1 for row in accounts if row.get("status") == "review"),
             "tasks_active": sum(1 for row in tasks if row.get("status") in {"queued", "running"}),
             "tasks_failed": sum(1 for row in tasks if row.get("status") == "failed"),
+            "tasks_stopped": sum(1 for row in tasks if row.get("status") == "stopped"),
         }
 
 
@@ -1125,7 +1126,14 @@ def mark_roxy_profile_deleted(account_id: int) -> dict | None:
         return _public_account(row)
 
 
-def update_task(task_id: int, *, status: str | None = None, stage: str | None = None, message: str | None = None) -> bool:
+def update_task(
+    task_id: int,
+    *,
+    status: str | None = None,
+    stage: str | None = None,
+    message: str | None = None,
+    **fields: Any,
+) -> bool:
     with _LOCK:
         tasks = _read(_TASKS)
         task = next((row for row in tasks if int(row.get("id") or 0) == int(task_id)), None)
@@ -1140,9 +1148,123 @@ def update_task(task_id: int, *, status: str | None = None, stage: str | None = 
             task["stage"] = stage
         if message is not None:
             task["message"] = str(message)[:600]
+        for key, value in fields.items():
+            if value is None:
+                task.pop(key, None)
+            else:
+                task[key] = value
         task["updated_at"] = now
         _write(_TASKS, tasks)
         return True
+
+
+def is_task_stop_requested(task_id: int) -> bool:
+    with _LOCK:
+        task = next((
+            row for row in _read(_TASKS)
+            if int(row.get("id") or 0) == int(task_id)
+        ), None)
+        return bool(task and task.get("stop_requested"))
+
+
+def request_task_stop(task_id: int) -> dict:
+    """记录停止请求；worker 会在当前浏览器/API步骤结束后安全收尾。"""
+    with _LOCK:
+        tasks = _read(_TASKS)
+        task = next((
+            row for row in tasks
+            if int(row.get("id") or 0) == int(task_id)
+        ), None)
+        if not task:
+            return {"task": None, "reason": "not_found"}
+        if task.get("status") not in {"queued", "running"}:
+            if task.get("status") == "stopped":
+                return {"task": dict(task), "reason": "already_stopped"}
+            return {"task": None, "reason": "not_active", "current": dict(task)}
+        now = _now()
+        task.update({
+            "stop_requested": True,
+            "stop_requested_at": now,
+            "message": "已请求停止，等待当前浏览器步骤结束",
+            "updated_at": now,
+        })
+        _write(_TASKS, tasks)
+        return {"task": dict(task), "reason": "requested"}
+
+
+def request_account_stop(account_id: int) -> dict:
+    """按账号找到当前活动任务并请求停止，避免用户需要记任务编号。"""
+    with _LOCK:
+        tasks = _read(_TASKS)
+        active = [
+            row for row in tasks
+            if int(row.get("account_id") or 0) == int(account_id)
+            and row.get("status") in {"queued", "running"}
+        ]
+        if not active:
+            return {"task": None, "reason": "not_active"}
+        task_id = max(active, key=lambda row: int(row.get("id") or 0)).get("id")
+    return request_task_stop(int(task_id))
+
+
+def finish_stopped(task_id: int, message: str = "用户请求停止") -> dict | None:
+    """停止任务并释放未换绑资源；服务端已确认换绑时冻结到人工核验。"""
+    with _LOCK:
+        tasks = _read(_TASKS)
+        accounts = _read(_ACCOUNTS)
+        replacements = _read(_REPLACEMENTS)
+        task = next((
+            row for row in tasks
+            if int(row.get("id") or 0) == int(task_id)
+        ), None)
+        if not task:
+            return None
+        account = next((
+            row for row in accounts
+            if int(row.get("id") or 0) == int(task.get("account_id") or 0)
+        ), None)
+        replacement = next((
+            row for row in replacements
+            if int(row.get("id") or 0) == int(task.get("replacement_id") or 0)
+        ), None)
+        now = _now()
+        clean = str(message or "用户请求停止")[:600]
+        uncertain = bool(task.get("email_change_confirmed")) or bool(task.get("login_only"))
+        task.update({
+            "status": "stopped",
+            "stage": "stopped_review" if uncertain else "stopped",
+            "message": clean if not uncertain else f"{clean}；换绑状态需人工核验",
+            "error": clean,
+            "retryable": False,
+            "completed_at": now,
+            "updated_at": now,
+            "stop_requested": True,
+        })
+        if account:
+            if uncertain:
+                email = str(account.get("current_email") or task.get("new_email") or "").strip()
+                account.update({
+                    "status": "review", "current_email": email, "new_email": email,
+                    "email_change_uncertain": True, "error": task["message"], "updated_at": now,
+                })
+            else:
+                account.update({"status": "ready", "error": clean, "updated_at": now})
+            account.pop("active_task_id", None)
+        if replacement:
+            if uncertain:
+                replacement.update({
+                    "status": "review", "failure_code": "stopped_review",
+                    "failure_reason": task["message"], "failed_at": now,
+                    "bound_old_email": task.get("old_email"), "updated_at": now,
+                })
+            else:
+                replacement.update({"status": "available", "updated_at": now})
+                for key in ("active_task_id", "bound_old_email"):
+                    replacement.pop(key, None)
+        _write(_TASKS, tasks)
+        _write(_ACCOUNTS, accounts)
+        _write(_REPLACEMENTS, replacements)
+        return dict(task)
 
 
 def finish_success(task_id: int, result: dict) -> None:
@@ -1294,7 +1416,9 @@ def recover_interrupted_tasks() -> int:
     uncertain_stages = {"submit_new_email_otp", "changed", "relogin_new", "verified", "kept_open"}
     for row in active:
         task_id = int(row.get("id") or 0)
-        if str(row.get("stage") or "") in uncertain_stages:
+        if row.get("stop_requested"):
+            finish_stopped(task_id)
+        elif str(row.get("stage") or "") in uncertain_stages:
             finish_review_failure(
                 task_id,
                 str(row.get("new_email") or ""),
