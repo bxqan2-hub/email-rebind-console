@@ -263,6 +263,29 @@ def restore_proxy(proxy_id: int) -> dict | None:
         return _public_proxy(row)
 
 
+def delete_proxy(proxy_id: int) -> dict:
+    """删除未被活动任务使用的代理；任务历史保留掩码与原代理 ID。"""
+    with _LOCK:
+        rows = _read(_PROXIES)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(proxy_id)), None)
+        if not row:
+            return {"deleted": False, "reason": "not_found"}
+        active_task = next((
+            task for task in _read(_TASKS)
+            if int(task.get("proxy_id") or 0) == int(proxy_id)
+            and task.get("status") in {"queued", "running"}
+        ), None)
+        if active_task:
+            return {
+                "deleted": False,
+                "reason": "in_use",
+                "task_id": int(active_task.get("id") or 0),
+            }
+        rows.remove(row)
+        _write(_PROXIES, rows)
+        return {"deleted": True, "item": _public_proxy(row)}
+
+
 def assign_task_proxy(task_id: int, proxy: dict, proxy_attempt: int) -> bool:
     with _LOCK:
         tasks = _read(_TASKS)
@@ -696,6 +719,30 @@ def restore_replacement(replacement_id: int) -> dict | None:
         return _public_replacement(row)
 
 
+def delete_replacement(replacement_id: int) -> dict:
+    """删除未被活动任务占用的替换邮箱；已完成任务和账号结果不受影响。"""
+    with _LOCK:
+        rows = _read(_REPLACEMENTS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(replacement_id)), None)
+        if not row:
+            return {"deleted": False, "reason": "not_found"}
+        active_task = next((
+            task for task in _read(_TASKS)
+            if int(task.get("replacement_id") or 0) == int(replacement_id)
+            and task.get("status") in {"queued", "running"}
+        ), None)
+        if row.get("status") == "reserved" or active_task:
+            task_id = int(
+                (active_task or {}).get("id")
+                or row.get("active_task_id")
+                or 0
+            )
+            return {"deleted": False, "reason": "in_use", "task_id": task_id}
+        rows.remove(row)
+        _write(_REPLACEMENTS, rows)
+        return {"deleted": True, "item": _public_replacement(row)}
+
+
 def get_task_context(task_id: int) -> dict | None:
     with _LOCK:
         task = next((row for row in _read(_TASKS) if int(row.get("id") or 0) == int(task_id)), None)
@@ -836,6 +883,7 @@ def finish_success(task_id: int, result: dict) -> None:
             "status": "used", "used_at": now, "updated_at": now,
             "bound_old_email": task.get("old_email"), "bound_account_id": account.get("id"),
         })
+        replacement.pop("active_task_id", None)
         _write(_TASKS, tasks)
         _write(_ACCOUNTS, accounts)
         _write(_REPLACEMENTS, replacements)

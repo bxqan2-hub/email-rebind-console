@@ -26,10 +26,10 @@
     <section class="view" id="view-workspace">
       <div class="grid three">
         <article class="card">
-          <div class="card-head"><div><span class="step">01</span><h2>智能导入</h2></div><span class="format">账号 / 邮箱URL</span></div>
-          <p>可混合粘贴：邮箱+密码+2FA 自动加入原账号；邮箱+URL 自动加入“替换邮箱”号池。</p>
+          <div class="card-head"><div><span class="step">01</span><h2>导入原邮箱账号</h2></div><span class="format">原邮箱 · 密码 · 2FA</span></div>
+          <p><strong>这里就是原邮箱入口，支持智能导入。</strong> 邮箱+密码+2FA 自动加入原账号；若混入邮箱+URL，也会智能分流到“替换邮箱”号池。</p>
           <textarea id="accountImport" placeholder="old@example.com----OpenAI密码----MFA Secret&#10;new@example.com----https://mail-api.example/code"></textarea>
-          <button class="btn primary" id="importAccounts">智能识别并导入</button>
+          <button class="btn primary" id="importAccounts">导入原邮箱账号（智能识别）</button>
         </article>
         <article class="card">
           <div class="card-head"><div><span class="step violet">02</span><h2>导入替换邮箱</h2></div><span class="format">邮箱 · API</span></div>
@@ -62,11 +62,11 @@
     </section>
 
     <section class="view hidden" id="view-pool">
-      <article class="card"><div class="card-head"><div><h2>替换邮箱号池</h2><p>失败邮箱会保留原因并退出自动配对；确认邮箱/API 修复后可手动重新启用。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>替换邮箱</th><th>API</th><th>状态</th><th>绑定原邮箱</th><th>失败原因</th><th>操作</th></tr></thead><tbody id="poolBody"></tbody></table></div></article>
+      <article class="card"><div class="card-head"><div><h2>替换邮箱号池</h2><p>失败邮箱可重新启用或删除；可用、失败、待核验和已使用记录均可删除，活动任务正在占用的邮箱会锁定删除。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>替换邮箱</th><th>API</th><th>状态</th><th>绑定原邮箱</th><th>失败原因</th><th>操作</th></tr></thead><tbody id="poolBody"></tbody></table></div></article>
     </section>
 
     <section class="view hidden" id="view-proxies">
-      <article class="card"><div class="card-head"><div><h2>换绑代理池</h2><p>代理凭据只保存在分站服务端，页面仅显示掩码。检测失败会记录原因并停止自动分配；修复后可手动重新启用。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>代理</th><th>状态</th><th>成功/失败</th><th>最近出口</th><th>最近账号</th><th>失败原因</th><th>操作</th></tr></thead><tbody id="proxyPoolBody"></tbody></table></div></article>
+      <article class="card"><div class="card-head"><div><h2>换绑代理池</h2><p>代理凭据只保存在分站服务端，页面仅显示掩码。失败代理可重新启用或删除；活动任务正在使用的代理会锁定删除。</p></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>代理</th><th>状态</th><th>成功/失败</th><th>最近出口</th><th>最近账号</th><th>失败原因</th><th>操作</th></tr></thead><tbody id="proxyPoolBody"></tbody></table></div></article>
     </section>
 
     <section class="view hidden" id="view-tasks">

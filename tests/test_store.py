@@ -45,6 +45,47 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(store.list_accounts(), [])
                 self.assertEqual(store.list_replacements()[0]["email"], "mail@example.com")
 
+    def test_delete_replacement_and_proxy_when_idle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies("http://proxy.example:8080")
+                replacement_id = store.list_replacements()[0]["id"]
+                proxy_id = store.list_proxies()[0]["id"]
+
+                self.assertTrue(store.delete_replacement(replacement_id)["deleted"])
+                self.assertTrue(store.delete_proxy(proxy_id)["deleted"])
+                self.assertEqual(store.list_replacements(), [])
+                self.assertEqual(store.list_proxies(), [])
+                self.assertEqual(store.delete_replacement(replacement_id)["reason"], "not_found")
+                self.assertEqual(store.delete_proxy(proxy_id)["reason"], "not_found")
+
+    def test_delete_replacement_and_proxy_is_blocked_during_active_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies("http://proxy.example:8080")
+                task = store.reserve_batch()[0]
+                proxy = store.pick_random_proxy()
+                store.assign_task_proxy(task["id"], proxy, 1)
+
+                replacement_id = store.list_replacements()[0]["id"]
+                proxy_id = store.list_proxies()[0]["id"]
+                replacement_result = store.delete_replacement(replacement_id)
+                proxy_result = store.delete_proxy(proxy_id)
+                self.assertEqual(replacement_result["reason"], "in_use")
+                self.assertEqual(proxy_result["reason"], "in_use")
+                self.assertEqual(replacement_result["task_id"], task["id"])
+                self.assertEqual(proxy_result["task_id"], task["id"])
+
     def test_main_format_pair_and_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -68,6 +109,15 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(account["roxy_browser_status"], "open")
                 self.assertEqual(account["roxy_profile_id"], "profile-1")
                 self.assertEqual(store.summary()["roxy_open"], 1)
+
+                replacement_id = store.list_replacements()[0]["id"]
+                self.assertTrue(store.delete_replacement(replacement_id)["deleted"])
+                self.assertEqual(store.list_replacements(), [])
+                self.assertEqual(store.list_tasks()[0]["status"], "success")
+                self.assertEqual(
+                    store.export_success_lines(),
+                    ["new@example.com----Password!----JBSWY3DPEHPK3PXP----at-new"],
+                )
 
                 started = store.begin_access_token_refresh(account["id"])
                 self.assertEqual(started["at_refresh_status"], "running")

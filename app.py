@@ -67,6 +67,19 @@ def create_app(*, recover: bool = True) -> Flask:
             return jsonify({"ok": False, "error": "替换邮箱不存在或当前不是失败状态"}), 409
         return jsonify({"ok": True, "item": row})
 
+    @app.delete("/api/replacements/<int:replacement_id>")
+    def api_delete_replacement(replacement_id: int):
+        result = store.delete_replacement(replacement_id)
+        if result.get("deleted"):
+            return jsonify({"ok": True, **result})
+        if result.get("reason") == "not_found":
+            return jsonify({"ok": False, "error": "替换邮箱不存在", **result}), 404
+        return jsonify({
+            "ok": False,
+            "error": f"替换邮箱正被任务 #{int(result.get('task_id') or 0)} 使用，请等待任务结束后再删除",
+            **result,
+        }), 409
+
     @app.post("/api/proxies/import")
     def api_import_proxies():
         data = request.get_json(silent=True) or {}
@@ -85,6 +98,19 @@ def create_app(*, recover: bool = True) -> Flask:
         if row is None:
             return jsonify({"ok": False, "error": "代理不存在或当前不是失败状态"}), 409
         return jsonify({"ok": True, "item": row})
+
+    @app.delete("/api/proxies/<int:proxy_id>")
+    def api_delete_proxy(proxy_id: int):
+        result = store.delete_proxy(proxy_id)
+        if result.get("deleted"):
+            return jsonify({"ok": True, **result})
+        if result.get("reason") == "not_found":
+            return jsonify({"ok": False, "error": "代理不存在", **result}), 404
+        return jsonify({
+            "ok": False,
+            "error": f"代理正被任务 #{int(result.get('task_id') or 0)} 使用，请等待任务结束后再删除",
+            **result,
+        }), 409
 
     @app.post("/api/accounts/<int:account_id>/refresh-at")
     def api_refresh_access_token(account_id: int):
