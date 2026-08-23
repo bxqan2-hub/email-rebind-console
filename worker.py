@@ -123,6 +123,9 @@ def _run(task_id: int) -> None:
         )
 
         def progress(stage: str, message: str) -> None:
+            # 同步本轮真实阶段，避免前一条代理失败留下的 proxy_failed 阶段
+            # 阻断 submit_new_email 临时故障的既有自动重试机制。
+            task["stage"] = stage
             store.update_task(
                 current_task_id, status="running", stage=stage,
                 message=f"第 {attempt} 次邮箱尝试 / 第 {proxy_attempt} 条代理：{message}",

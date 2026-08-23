@@ -50,6 +50,50 @@ class WorkerRotationTests(unittest.TestCase):
                 self.assertEqual(tasks[1]["retry_of_task_id"], tasks[0]["id"])
                 self.assertEqual(tasks[1]["attempt"], 2)
 
+    def test_begin_no_response_retries_after_an_earlier_proxy_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_random = Mock()
+            fake_random.choice.side_effect = lambda rows: rows[0]
+            seen: list[str] = []
+
+            def perform(**kwargs):
+                seen.append(kwargs["proxy_url"])
+                if len(seen) == 1:
+                    raise roxy_flow.ProxyFailure("Roxy 窗口代理出口复核失败；登录尚未开始")
+                if len(seen) == 2:
+                    kwargs["progress"]("submit_new_email", "提交替换邮箱并请求新邮箱验证码")
+                    raise RuntimeError("提交替换邮箱后未取得服务端响应，可使用失败重试")
+                return {"email": kwargs["new_email"], "access_token": "at-new"}
+
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(store, "_PROXY_RANDOM", fake_random), \
+                    patch.object(worker.settings, "MAX_TRANSIENT_RETRIES", 1), \
+                    patch.object(worker.settings, "TRANSIENT_RETRY_DELAY", 0), \
+                    patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
+                    patch.object(worker.roxy_flow, "perform_email_rebind", side_effect=perform) as run:
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies(
+                    "http://first.example:8080\n"
+                    "http://second.example:8080\n"
+                    "http://third.example:8080"
+                )
+                initial = store.reserve_batch()[0]
+                worker._run(initial["id"])
+
+                self.assertEqual(run.call_count, 3)
+                self.assertEqual(len(set(seen)), 3)
+                self.assertEqual(store.list_accounts()[0]["status"], "success")
+                tasks = sorted(store.list_tasks(), key=lambda row: int(row["id"]))
+                self.assertEqual(tasks[0]["stage"], "transient_failed")
+                self.assertEqual(tasks[0]["auto_retry_status"], "scheduled")
+                self.assertEqual(tasks[1]["retry_of_task_id"], tasks[0]["id"])
+                self.assertEqual(tasks[1]["stage"], "kept_open")
+
     def test_transient_retries_are_bounded_and_release_replacement(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
