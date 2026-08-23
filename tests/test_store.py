@@ -137,6 +137,26 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(replacement_result["task_id"], task["id"])
                 self.assertEqual(proxy_result["task_id"], task["id"])
 
+    def test_delete_all_proxies_keeps_active_task_proxy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies("http://proxy-one.example:8080\nhttp://proxy-two.example:8080")
+                task = store.reserve_batch()[0]
+                proxy = store.pick_random_proxy()
+                store.assign_task_proxy(task["id"], proxy, 1)
+
+                result = store.delete_all_proxies()
+                self.assertEqual(result["deleted"], 1)
+                self.assertEqual(result["skipped_count"], 1)
+                self.assertEqual(result["skipped"][0]["task_id"], task["id"])
+                self.assertEqual([row["id"] for row in store.list_proxies()], [proxy["id"]])
+
     def test_main_format_pair_and_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

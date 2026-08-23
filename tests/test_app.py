@@ -43,6 +43,20 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(client.delete(f"/api/replacements/{replacement_id}").status_code, 404)
                 self.assertEqual(client.delete(f"/api/proxies/{proxy_id}").status_code, 404)
 
+    def test_bulk_proxy_delete_route(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_proxies("http://proxy-one.example:8080\nhttp://proxy-two.example:8080")
+                client = app.create_app(recover=False).test_client()
+
+                response = client.delete("/api/proxies")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["deleted"], 2)
+                self.assertEqual(response.get_json()["skipped_count"], 0)
+                self.assertEqual(store.list_proxies(), [])
+
     def test_original_account_delete_route(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -206,6 +220,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("导入原邮箱账号", html)
         self.assertIn("data-delete-replacement", script)
         self.assertIn("data-delete-proxy", script)
+        self.assertIn('id="deleteAllProxies"', html)
         self.assertIn("data-delete-account", script)
         self.assertIn("data-retry-account", script)
         self.assertIn("自动重试中", script)

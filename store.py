@@ -291,6 +291,39 @@ def delete_proxy(proxy_id: int) -> dict:
         return {"deleted": True, "item": _public_proxy(row)}
 
 
+def delete_all_proxies() -> dict:
+    """删除全部未被活动任务使用的代理，并保留被占用代理。"""
+    with _LOCK:
+        rows = _read(_PROXIES)
+        active_tasks = {
+            int(task.get("proxy_id") or 0): task
+            for task in _read(_TASKS)
+            if task.get("status") in {"queued", "running"}
+            and int(task.get("proxy_id") or 0) > 0
+        }
+        kept: list[dict] = []
+        deleted: list[dict] = []
+        skipped: list[dict] = []
+        for row in rows:
+            proxy_id = int(row.get("id") or 0)
+            active_task = active_tasks.get(proxy_id)
+            if active_task:
+                kept.append(row)
+                skipped.append({
+                    "id": proxy_id,
+                    "task_id": int(active_task.get("id") or 0),
+                })
+                continue
+            deleted.append(_public_proxy(row))
+        _write(_PROXIES, kept)
+        return {
+            "deleted": len(deleted),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "items": deleted,
+        }
+
+
 def assign_task_proxy(task_id: int, proxy: dict, proxy_attempt: int) -> bool:
     with _LOCK:
         tasks = _read(_TASKS)

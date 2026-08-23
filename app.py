@@ -139,6 +139,11 @@ def create_app(*, recover: bool = True) -> Flask:
             **result,
         }), 409
 
+    @app.delete("/api/proxies")
+    def api_delete_all_proxies():
+        result = store.delete_all_proxies()
+        return jsonify({"ok": True, **result})
+
     @app.post("/api/accounts/<int:account_id>/refresh-at")
     def api_refresh_access_token(account_id: int):
         result = worker.submit_access_token_refresh(account_id)
