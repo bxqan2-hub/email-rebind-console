@@ -18,8 +18,8 @@ class GCashIntegrationTests(unittest.TestCase):
         self.assertTrue((gcash_service.UPSTREAM_ROOT / "web" / "index.html").is_file())
         self.assertTrue((gcash_service.UPSTREAM_ROOT / "LICENSE").is_file())
         source = (gcash_service.UPSTREAM_ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn("frame-ancestors 'none'", source)
-        self.assertIn('self.send_header("X-Frame-Options", "DENY")', source)
+        self.assertIn("frame-ancestors {EMBED_ORIGIN}", source)
+        self.assertNotIn('self.send_header("X-Frame-Options", "DENY")', source)
 
     def test_left_navigation_and_lazy_iframe(self):
         with patch.object(gcash_service, "status", return_value={"running": False}):

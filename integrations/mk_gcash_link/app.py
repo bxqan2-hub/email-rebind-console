@@ -25,6 +25,7 @@ from gcash_chain import (
 
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web"
+EMBED_ORIGIN = os.getenv("MK_EMBED_ORIGIN", "http://127.0.0.3:5092")
 MAX_BODY_BYTES = 4 * 1024 * 1024
 MAX_PROXIES = 100
 JOB_RETENTION_SECONDS = 60 * 60
@@ -435,14 +436,13 @@ class Handler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'none'; form-action 'self'; "
-            "frame-ancestors 'none'; object-src 'none'; script-src 'self'; "
+            f"frame-ancestors {EMBED_ORIGIN}; object-src 'none'; script-src 'self'; "
             "style-src 'self'; img-src 'self' data:; connect-src 'self'",
         )
         super().end_headers()
