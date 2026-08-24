@@ -19,6 +19,13 @@ HTML_SUBJECT_RE = re.compile(
     r"\s*(?:is|:)?\s*(\d{6})",
     re.IGNORECASE | re.DOTALL,
 )
+HTML_MAIL_CARD_RE = re.compile(
+    r"<a\b[^>]*class=[\"'][^\"']*\bmail\b[^\"']*[\"'][^>]*>.*?</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+HTML_MAIL_TIME_RE = re.compile(
+    r"\b(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}(?::\d{2})?)\b"
+)
 
 
 def _parse_time(value: Any) -> float | None:
@@ -41,6 +48,11 @@ def _parse_time(value: Any) -> float | None:
             text = text[:-1] + "+00:00"
         return datetime.fromisoformat(text).timestamp()
     except Exception:
+        for fmt in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M"):
+            try:
+                return datetime.strptime(text, fmt).timestamp()
+            except ValueError:
+                continue
         return None
 
 
@@ -81,6 +93,32 @@ def extract_otp_from_text(text: str) -> str:
     visible = re.sub(r"<[^>]+>", " ", visible)
     matches = OTP_RE.findall(visible)
     return matches[0] if matches else ""
+
+
+def _extract_html_mailbox_otp(text: str, issued_after: float | None) -> str:
+    """Return the newest OTP card issued in the current begin window.
+
+    Public mailbox pages often retain older messages and only expose minute
+    precision.  Treat the complete displayed minute as the delivery window;
+    when all timestamped cards predate ``issued_after``, keep polling instead
+    of immediately submitting the newest stale code.
+    """
+    cards = HTML_MAIL_CARD_RE.findall(text or "")
+    saw_timestamp = False
+    for card in cards:
+        code = extract_otp_from_text(card)
+        if not code:
+            continue
+        time_match = HTML_MAIL_TIME_RE.search(card)
+        timestamp = _parse_time(time_match.group(1)) if time_match else None
+        if timestamp is not None:
+            saw_timestamp = True
+            if issued_after is not None and timestamp + 60 < issued_after:
+                continue
+        return code
+    if cards and saw_timestamp and issued_after is not None:
+        return ""
+    return extract_otp_from_text(text)
 
 
 def fetch_latest_otp(mail_api: str, *, issued_after: float | None = None, timeout: float = 20.0) -> str:
@@ -130,7 +168,7 @@ def fetch_latest_otp(mail_api: str, *, issued_after: float | None = None, timeou
             return code
         return ""
 
-    return extract_otp_from_text(str(payload))
+    return _extract_html_mailbox_otp(str(payload), issued_after)
 
 
 def wait_code(

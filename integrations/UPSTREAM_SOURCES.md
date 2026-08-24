@@ -52,9 +52,10 @@ instead of reimplementing its steps. The 27-file vendored tree is locked to the
 commit above, with one local bug fix in `rebind_core/mail_inbox.py`: HTML
 mailbox responses are ordered newest-first, so the adapter now selects the
 first explicit OTP card (and avoids CSS/URL numbers) instead of the final
-six-digit match, which was an older message's code. The adapted combined tree
-SHA-256 is
-`74a3315a570adfbb92a82da128d5f69b12ea28acfcf2fb4cf23dd2cdb2a847e2`.
+six-digit match. Timestamped cards older than the current `begin` window are
+ignored while polling, so delivery latency cannot cause immediate submission
+of the previous run's code. The adapted combined tree SHA-256 is
+`313a43d43c3161757b38039e95842b891573623303ebd3498ab46f3aa21668ad`.
 Upstream runtime bundles, cookies, access tokens, and traces remain under its
 ignored `outputs/` paths and are not committed.
 
