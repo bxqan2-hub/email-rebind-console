@@ -3,7 +3,6 @@ import json
 import threading
 import time
 import unittest
-from types import SimpleNamespace
 import urllib.error
 import urllib.request
 from unittest.mock import MagicMock, patch
@@ -58,10 +57,16 @@ class StandaloneAppTests(unittest.TestCase):
             "proxy.example:8080",
             "http://user:pass@proxy.example:8081",
             "socks5://proxy.example:1080",
-            "socks5://user:pass@proxy.example:1082",
         ])
-        self.assertEqual(4, len(pool))
-        self.assertEqual("socks5://user:pass@proxy.example:1082", pool[-1])
+        self.assertEqual(3, len(pool))
+        self.assertEqual(
+            [
+                "proxy.example:8080",
+                "http://user:pass@proxy.example:8081",
+                "socks5://proxy.example:1080",
+            ],
+            pool,
+        )
         with self.assertRaisesRegex(ValueError, "自备代理池"):
             app.create_job({"proxy_mode": "platform"})
 
@@ -75,63 +80,18 @@ class StandaloneAppTests(unittest.TestCase):
             manager.executor.shutdown(wait=True)
 
     def test_authenticated_socks5_uses_loopback_browser_bridge(self):
+        from types import SimpleNamespace
         import payment_monitor
-        with patch("socks_bridge.get_bridge", return_value=SimpleNamespace(url="http://127.0.0.1:45678")) as bridge:
+
+        with patch(
+            "socks_bridge.get_bridge",
+            return_value=SimpleNamespace(url="http://127.0.0.1:45678"),
+        ) as bridge:
             config = payment_monitor._playwright_proxy(
                 "socks5://user:pass@proxy.example:1082"
             )
         self.assertEqual({"server": "http://127.0.0.1:45678"}, config)
         bridge.assert_called_once_with("proxy.example", 1082, "user", "pass")
-
-    def test_batch_job_uses_requested_concurrency_and_one_proxy_per_at(self):
-        first = jwt({"exp": int(time.time()) + 3600, "email": "one@example.com"})
-        second = jwt({"exp": int(time.time()) + 3600, "email": "two@example.com"})
-        fake_manager = MagicMock()
-        fake_manager.create_session.return_value = "local_0123456789abcdef"
-        with (
-            patch.object(app, "CHAIN_MANAGER", fake_manager),
-            patch.object(app, "public_job", return_value={"job_id": "local_0123456789abcdef"}),
-        ):
-            result = app.create_job({
-                "tokens": f"{first}\n{second}",
-                "proxy_pool": ["proxy-one.example:8001", "proxy-two.example:8002"],
-                "concurrency": 2,
-            })
-
-        self.assertEqual("local_0123456789abcdef", result["job_id"])
-        fake_manager.create_session.assert_called_once_with(max_concurrency=2)
-        payloads = fake_manager.submit_jobs.call_args.args[1]
-        self.assertEqual(2, len(payloads))
-        self.assertEqual(
-            ["proxy-one.example:8001", "proxy-two.example:8002"],
-            [item["proxy"] for item in payloads],
-        )
-        self.assertEqual([[item["proxy"]] for item in payloads], [item["proxy_pool"] for item in payloads])
-
-        with self.assertRaisesRegex(ValueError, "每个 AT 配置一条代理"):
-            app.create_job({
-                "tokens": f"{first}\n{second}",
-                "proxy_pool": ["proxy-one.example:8001"],
-                "concurrency": 2,
-            })
-
-    def test_session_concurrency_limits_parallel_accounts(self):
-        manager = app.GCashSessionManager(
-            max_concurrency=4, max_queue=10, max_session_concurrency=4,
-        )
-        try:
-            with patch.object(manager.executor, "submit", return_value=MagicMock()):
-                session_id = manager.create_session(max_concurrency=2)
-                manager.submit_jobs(session_id, [
-                    {"token": f"token-{index}", "proxy": f"proxy-{index}", "max_attempts": 1}
-                    for index in range(4)
-                ])
-            self.assertEqual(2, manager.active_count)
-            self.assertEqual(2, manager.active_by_session[session_id])
-            self.assertEqual(2, len(manager.pending_tasks))
-            self.assertEqual(2, manager.get_session(session_id)["max_concurrency"])
-        finally:
-            manager.executor.shutdown(wait=True)
 
     def test_fallback_qr_contains_a_valid_png_for_a_gcash_link(self):
         link = (
@@ -253,9 +213,9 @@ class StandaloneAppTests(unittest.TestCase):
             with urllib.request.urlopen(base + "/api/health", timeout=5) as response:
                 body = json.loads(response.read())
                 self.assertTrue(body["ok"])
-                self.assertIsNone(response.headers["X-Frame-Options"])
+                self.assertIsNone(response.headers.get("X-Frame-Options"))
                 self.assertIn(
-                    f"frame-ancestors {app.EMBED_ORIGIN}",
+                    "frame-ancestors http://127.0.0.3:5092",
                     response.headers["Content-Security-Policy"],
                 )
                 self.assertEqual("no-store", response.headers["Cache-Control"])

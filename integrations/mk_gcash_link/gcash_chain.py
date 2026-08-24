@@ -110,7 +110,7 @@ def _parse_proxy(proxy):
 
 
 def _ensure_full_chain_proxy_supported(proxy):
-    """Validate proxy syntax; authenticated SOCKS5 uses the local browser bridge."""
+    """Validate syntax; authenticated SOCKS5 uses the browser bridge."""
     proxy_type, host, port, username, password = _parse_proxy(proxy)
     if proxy_type == "socks5" and (username is not None or password is not None):
         if not host or not port or not username or password is None:
@@ -250,10 +250,7 @@ def _request(method, url, headers, data=None, timeout=HTTP_TIMEOUT, proxy=None, 
         raise
     except Exception as e:
         message = re.sub(r"(?i)(https?://)[^/@\s]+@", r"\1<credentials>@", str(e))
-        lowered = message.lower()
-        if "proxy connect aborted" in lowered or "proxy connect" in lowered and "aborted" in lowered:
-            raise RuntimeError("代理连接失败：CONNECT 被代理端中止")
-        if "timeout" in lowered or "timed out" in lowered:
+        if "timeout" in message.lower() or "timed out" in message.lower():
             raise RuntimeError("连接超时")
         raise RuntimeError(f"连接失败：{message[:200]}")
     finally:
@@ -541,18 +538,7 @@ def _retry_decision(result):
     if "checkout_creation_rate_limited" in err or "too many checkout attempts" in err:
         return False, ""
     if current_step == "proxy_test":
-        # A country/IP/format result is deterministic for the supplied route.
-        # Retrying the same per-AT proxy only kept the UI on “验证 PH 代理出口”
-        # and could never change the result. Keep retries for transport errors,
-        # matching the upstream chain's retry boundary without masking bad nodes.
-        if any(marker in err for marker in (
-            "出口不是 ph", "trace 未返回出口 ip", "代理格式无效",
-            "带账号密码的 socks5", "缺少可复核的初始出口 ip",
-        )):
-            return False, ""
-        if _callback_error_is_retryable(err):
-            return True, "代理预检连接失败，重试"
-        return False, ""
+        return True, "代理预检失败，换节点重试"
     if current_step == "create_checkout" and any(kw in err for kw in (
         "连接失败", "连接超时", "timeout", "timed out", "refused", "proxy",
         "无法连接", "connection", "reset", "eof", "cloudflare",
@@ -1408,33 +1394,17 @@ class GCashSessionManager:
             self._dispatch_locked()
             return self._queue_status_locked()
 
-    def create_session(self, max_concurrency=None):
+    def create_session(self):
         """创建新会话"""
         session_id = "local_" + secrets.token_hex(8)
         with self.lock:
             self._cleanup_locked()
-            session_concurrency = (
-                self.max_session_concurrency
-                if max_concurrency is None
-                else max(1, min(int(max_concurrency), self.max_session_concurrency))
-            )
             self.sessions[session_id] = {
                 "tasks": [],
                 "created": time.time(),
                 "done": False,
-                "max_concurrency": session_concurrency,
             }
         return session_id
-
-    def _session_limit_locked(self, session_id):
-        session = self.sessions.get(session_id) or {}
-        return max(
-            1,
-            min(
-                int(session.get("max_concurrency") or self.max_session_concurrency),
-                self.max_session_concurrency,
-            ),
-        )
 
     def submit_jobs(self, session_id, payloads):
         """提交任务到会话（每次尝试固定一个 PH 节点）"""
@@ -1448,7 +1418,7 @@ class GCashSessionManager:
             free_workers = max(0, self.max_concurrency - self.active_count)
             session_free = max(
                 0,
-                self._session_limit_locked(session_id)
+                self.max_session_concurrency
                 - self.active_by_session.get(session_id, 0),
             )
             immediately_runnable = min(free_workers, session_free)
@@ -1503,7 +1473,7 @@ class GCashSessionManager:
                 index
                 for index, (pending_session_id, _) in enumerate(self.pending_tasks)
                 if self.active_by_session.get(pending_session_id, 0)
-                < self._session_limit_locked(pending_session_id)
+                < self.max_session_concurrency
             ), None)
             if eligible_index is None:
                 break
@@ -1650,7 +1620,6 @@ class GCashSessionManager:
                 task["current_step"] = "init"
                 task["steps"] = copy.deepcopy(retry_steps)
                 task["error_message"] = ""
-                task["attempts_used"] = attempt + 1
             chain = GCashChain(
                 token=task["token"],
                 client_account_id=task["client_account_id"],
@@ -1689,12 +1658,7 @@ class GCashSessionManager:
             if not retryable or attempt >= max_attempts - 1:
                 return
 
-            next_proxy = self._rotate_proxy(proxy, task.get("proxy_pool"))
-            # Each AT is assigned one initial proxy by the console. A proxy-test
-            # failure must not re-run the same route until the UI looks stuck.
-            if result.get("current_step") == "proxy_test" and not next_proxy:
-                return
-            proxy = next_proxy or proxy
+            proxy = self._rotate_proxy(proxy, task.get("proxy_pool")) or proxy
             retry_steps.append({
                 "key": f"retry_{attempt + 1}",
                 "label": f"{retry_label} #{attempt + 1}",
@@ -1739,7 +1703,6 @@ class GCashSessionManager:
             return {
                 "done": session["done"],
                 "tasks": copy.deepcopy(session["tasks"]),
-                "max_concurrency": self._session_limit_locked(session_id),
             }
 
     @staticmethod

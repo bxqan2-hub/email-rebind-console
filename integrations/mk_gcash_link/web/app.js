@@ -7,7 +7,6 @@ const state = {
   stopping: false,
   abandoning: false,
   maxAccounts: 50,
-  maxConcurrency: 4,
   maxProxies: 100,
 };
 
@@ -257,10 +256,7 @@ function progressPercent(account) {
 function progressText(account) {
   if (account.queue_position) return `队列第 ${account.queue_position} 位`;
   const active = [...(account.steps || [])].reverse().find(step => step.state === "active");
-  if (active?.label) {
-    const attempt = Number(account.attempts_used) || 0;
-    return attempt > 1 ? `${active.label} · 第 ${attempt} 次` : active.label;
-  }
+  if (active?.label) return active.label;
   if (account.status === "canceling") return "正在停止任务";
   return account.attempts_used ? `已尝试 ${account.attempts_used} 次` : "准备提链";
 }
@@ -533,12 +529,6 @@ async function startJob() {
   if (!selectedAccounts.length) return toast("请选择有效账号");
   if (!proxies.length) return toast("请填写 PH 住宅代理池");
   if (proxies.length > state.maxProxies) return toast(`自备代理最多 ${state.maxProxies} 条`);
-  if (proxies.length < selectedAccounts.length) return toast(`每个 AT 需要一条代理：当前 ${selectedAccounts.length} 个 AT、${proxies.length} 条代理`);
-  const concurrency = Math.max(1, Math.min(
-    Number($("jobConcurrency").value) || 1,
-    selectedAccounts.length,
-    state.maxConcurrency,
-  ));
 
   $("startJob").disabled = true;
   try {
@@ -551,7 +541,6 @@ async function startJob() {
           name: account.name,
         })),
         proxy_pool: proxies,
-        concurrency,
         max_attempts: Number($("maxAttempts").value) || 5,
       }),
     });
@@ -608,9 +597,6 @@ async function health() {
   try {
     const result = await api("/api/health");
     state.maxAccounts = Math.max(1, Number(result.limits?.max_accounts) || 50);
-    state.maxConcurrency = Math.max(1, Number(result.limits?.max_concurrency) || 4);
-    $("jobConcurrency").max = String(state.maxConcurrency);
-    $("jobConcurrency").value = String(Math.min(Number($("jobConcurrency").value) || 4, state.maxConcurrency));
     updateQueue(result.queue);
     updateInputCounts();
   } catch {
@@ -623,7 +609,6 @@ async function health() {
 $("tokenInput").oninput = updateInputCounts;
 $("proxyInput").oninput = updateInputCounts;
 $("maxAttempts").onchange = updateFlow;
-$("jobConcurrency").onchange = updateFlow;
 $("importTokenBtn").onclick = parseAccounts;
 $("clearToken").onclick = () => {
   $("tokenInput").value = "";

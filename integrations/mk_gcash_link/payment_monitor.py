@@ -409,9 +409,8 @@ def _playwright_proxy(proxy):
     if not host or not port:
         raise RuntimeError("回调监控节点格式无效")
     if proxy_type == "socks5" and (username is not None or password is not None):
-        # Chromium rejects SOCKS5 username/password authentication. Route the
-        # browser context through a loopback HTTP CONNECT bridge instead; the
-        # HTTP API/Sentinel stages continue to use the authenticated SOCKS5 URL.
+        # Chromium rejects SOCKS5 username/password authentication. Keep the
+        # upstream API/Sentinel path untouched; bridge only this browser hop.
         from socks_bridge import get_bridge
         bridge = get_bridge(host, port, username, password)
         return {"server": bridge.url}

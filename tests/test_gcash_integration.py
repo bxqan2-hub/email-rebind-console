@@ -38,7 +38,7 @@ class GCashIntegrationTests(unittest.TestCase):
         self.assertIn('event.source !== window.parent', upstream_script)
         self.assertIn('event.origin !== REBIND_PARENT_ORIGIN', upstream_script)
         self.assertIn("Array.isArray(payload.accounts)", upstream_script)
-        self.assertIn('id="jobConcurrency"', (gcash_service.UPSTREAM_ROOT / "web" / "index.html").read_text(encoding="utf-8"))
+        self.assertNotIn('id="jobConcurrency"', (gcash_service.UPSTREAM_ROOT / "web" / "index.html").read_text(encoding="utf-8"))
 
     def test_health_exposes_gcash_companion_status(self):
         expected = {"running": True, "port": 8931}
