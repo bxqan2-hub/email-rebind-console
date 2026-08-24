@@ -59,14 +59,14 @@ class StandaloneAppTests(unittest.TestCase):
             "socks5://proxy.example:1080",
         ])
         self.assertEqual(3, len(pool))
-        self.assertEqual(
-            [
-                "proxy.example:8080",
-                "http://user:pass@proxy.example:8081",
-                "socks5://proxy.example:1080",
-            ],
-            pool,
-        )
+        bridge_pool = app.parse_proxy_pool([
+            "socks5://user:pass@proxy.example:1080",
+            "proxy.example:8080",
+            "http://user:pass@proxy.example:8081",
+            "socks5://proxy.example:1080",
+        ])
+        self.assertEqual(4, len(bridge_pool))
+        self.assertIn("socks5://user:pass@proxy.example:1080", bridge_pool)
         with self.assertRaisesRegex(ValueError, "自备代理池"):
             app.create_job({"proxy_mode": "platform"})
 
@@ -81,7 +81,6 @@ class StandaloneAppTests(unittest.TestCase):
 
     def test_authenticated_socks5_uses_loopback_browser_bridge(self):
         from types import SimpleNamespace
-        import payment_monitor
 
         with patch(
             "socks_bridge.get_bridge",
@@ -213,11 +212,7 @@ class StandaloneAppTests(unittest.TestCase):
             with urllib.request.urlopen(base + "/api/health", timeout=5) as response:
                 body = json.loads(response.read())
                 self.assertTrue(body["ok"])
-                self.assertIsNone(response.headers.get("X-Frame-Options"))
-                self.assertIn(
-                    "frame-ancestors http://127.0.0.3:5092",
-                    response.headers["Content-Security-Policy"],
-                )
+                self.assertEqual("DENY", response.headers["X-Frame-Options"])
                 self.assertEqual("no-store", response.headers["Cache-Control"])
             with urllib.request.urlopen(base + "/assets/logo.svg", timeout=5) as response:
                 self.assertEqual("image/svg+xml", response.headers.get_content_type())

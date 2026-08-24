@@ -18,8 +18,8 @@ class GCashIntegrationTests(unittest.TestCase):
         self.assertTrue((gcash_service.UPSTREAM_ROOT / "web" / "index.html").is_file())
         self.assertTrue((gcash_service.UPSTREAM_ROOT / "LICENSE").is_file())
         source = (gcash_service.UPSTREAM_ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn("frame-ancestors {EMBED_ORIGIN}", source)
-        self.assertNotIn('self.send_header("X-Frame-Options", "DENY")', source)
+        self.assertIn("frame-ancestors 'none'", source)
+        self.assertIn('self.send_header("X-Frame-Options", "DENY")', source)
 
     def test_left_navigation_and_lazy_iframe(self):
         with patch.object(gcash_service, "status", return_value={"running": False}):
@@ -34,10 +34,9 @@ class GCashIntegrationTests(unittest.TestCase):
         self.assertIn("pushAccessTokenToGCash", script)
         self.assertIn("pushSelectedAccessTokensToGCash", script)
         upstream_script = (gcash_service.UPSTREAM_ROOT / "web" / "app.js").read_text(encoding="utf-8")
-        self.assertIn('email-rebind:push-at', upstream_script)
-        self.assertIn('event.source !== window.parent', upstream_script)
-        self.assertIn('event.origin !== REBIND_PARENT_ORIGIN', upstream_script)
-        self.assertIn("Array.isArray(payload.accounts)", upstream_script)
+        self.assertNotIn('email-rebind:push-at', upstream_script)
+        self.assertNotIn('event.source !== window.parent', upstream_script)
+        self.assertNotIn('event.origin !== REBIND_PARENT_ORIGIN', upstream_script)
         self.assertNotIn('id="jobConcurrency"', (gcash_service.UPSTREAM_ROOT / "web" / "index.html").read_text(encoding="utf-8"))
 
     def test_health_exposes_gcash_companion_status(self):
