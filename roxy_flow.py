@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from typing import Callable
+from urllib.parse import urlsplit
 
 import pyotp
 
@@ -132,6 +133,40 @@ def _open_existing_profile(client, profile_id: str):
     )
 
 
+def _roxy_cdp_port(opened) -> int | None:
+    """从 Roxy 打开结果中提取可供抓包工具连接的 CDP 端口。"""
+    for value in (
+        getattr(opened, "debugger_address", None),
+        getattr(opened, "ws_endpoint", None),
+    ):
+        text = str(value or "").strip()
+        if not text:
+            continue
+        try:
+            parsed = urlsplit(text if "://" in text else f"//{text}")
+            if parsed.port and 0 < parsed.port <= 65535:
+                return int(parsed.port)
+        except ValueError:
+            continue
+    return None
+
+
+def resolve_roxy_cdp_port(profile_id: str) -> int | None:
+    """读取当前成功环境的 CDP 端口；重启后会重新打开环境并回填。"""
+    key = str(profile_id or "").strip()
+    if not key:
+        return None
+    with _RETAINED_LOCK:
+        retained = _RETAINED.get(key)
+    if retained:
+        port = _roxy_cdp_port(retained.get("opened"))
+        if port:
+            return port
+    RoxyBrowserClient = _load_main_roxy()[0]
+    opened = _open_existing_profile(RoxyBrowserClient(), key)
+    return _roxy_cdp_port(opened)
+
+
 def _retained_or_reopen(profile_id: str, expected_email: str) -> dict:
     key = str(profile_id or "").strip()
     with _RETAINED_LOCK:
@@ -173,6 +208,7 @@ def refresh_retained_access_token(profile_id: str, expected_email: str) -> dict:
         return {
             "email": observed or expected, "access_token": access_token,
             "session": session, "roxy_profile_id": str(profile_id),
+            "roxy_cdp_port": _roxy_cdp_port(record.get("opened")),
         }
 
 
@@ -868,6 +904,7 @@ def perform_replacement_login(
         return {
             "email": observed, "access_token": access_token, "session": new_session,
             "roxy_profile_id": opened.profile_id, "proxy_exit_geo": exit_geo,
+            "roxy_cdp_port": _roxy_cdp_port(opened),
             "roxy_browser_status": "open",
         }
     finally:
@@ -1012,6 +1049,7 @@ def perform_email_rebind(
         return {
             "email": observed_new, "access_token": access_token, "session": new_session,
             "roxy_profile_id": opened.profile_id, "proxy_exit_geo": exit_geo,
+            "roxy_cdp_port": _roxy_cdp_port(opened),
             "roxy_browser_status": "open",
         }
     finally:

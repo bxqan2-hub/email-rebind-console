@@ -208,6 +208,7 @@ class StoreTests(unittest.TestCase):
                 store.finish_success(tasks[0]["id"], {
                     "email": "new@example.com", "access_token": "at-new",
                     "roxy_profile_id": "profile-1", "roxy_browser_status": "open",
+                    "roxy_cdp_port": 9333,
                 })
                 self.assertEqual(
                     store.export_success_lines(),
@@ -220,6 +221,8 @@ class StoreTests(unittest.TestCase):
                 )
                 self.assertEqual(account["roxy_browser_status"], "open")
                 self.assertEqual(account["roxy_profile_id"], "profile-1")
+                self.assertEqual(account["roxy_cdp_port"], 9333)
+                self.assertEqual(store.list_tasks()[0]["roxy_cdp_port"], 9333)
                 self.assertEqual(store.get_success_access_token(account["id"]), "at-new")
                 self.assertEqual(store.summary()["roxy_open"], 1)
 
@@ -234,7 +237,9 @@ class StoreTests(unittest.TestCase):
 
                 started = store.begin_access_token_refresh(account["id"])
                 self.assertEqual(started["at_refresh_status"], "running")
-                refreshed = store.finish_access_token_refresh(account["id"], {"access_token": "at-plus"})
+                refreshed = store.finish_access_token_refresh(account["id"], {
+                    "access_token": "at-plus", "roxy_cdp_port": 9444,
+                })
                 self.assertEqual(refreshed["at_refresh_status"], "success")
                 self.assertTrue(refreshed["at_token_changed"])
                 self.assertTrue(refreshed["at_saved"])
@@ -242,6 +247,7 @@ class StoreTests(unittest.TestCase):
                 persisted = json.loads((root / "accounts.json").read_text(encoding="utf-8"))[0]
                 self.assertEqual(persisted["access_token"], "at-plus")
                 self.assertEqual(persisted["at_saved_at"], refreshed["at_saved_at"])
+                self.assertEqual(persisted["roxy_cdp_port"], 9444)
                 self.assertEqual(
                     store.export_success_lines(),
                     ["old@example.com----new@example.com----Password!----JBSWY3DPEHPK3PXP----at-plus"],
@@ -259,6 +265,7 @@ class StoreTests(unittest.TestCase):
                 deleted = store.mark_roxy_profile_deleted(account["id"])
                 self.assertEqual(deleted["roxy_browser_status"], "deleted")
                 self.assertEqual(deleted["roxy_profile_id"], "")
+                self.assertNotIn("roxy_cdp_port", deleted)
                 self.assertEqual(store.summary()["roxy_open"], 0)
                 removed_account = store.delete_source_account(account["id"])
                 self.assertTrue(removed_account["deleted"])

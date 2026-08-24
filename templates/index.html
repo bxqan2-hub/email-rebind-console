@@ -58,7 +58,7 @@
 
       <article class="card success-account-card">
         <div class="card-head responsive"><div><h2>换绑完成账号</h2><p>成功窗口默认保持登录；重新获取 AT 后会原子保存，界面自动刷新并显示“AT 已更新”或“AT 未变化”。选择账号后可批量复制 AT 或清理账号；“复制AT”只复制该账号的单独 AT；“关闭并删除”会永久删除对应 Roxy Profile。</p></div><div class="actions"><label><input type="checkbox" id="selectSuccessAll"> 全选账号</label><button class="btn primary" id="copySelectedAT" disabled>复制所选 AT</button><button class="btn danger" id="cleanupSelectedAccounts" disabled>清理所选账号</button></div></div>
-        <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectSuccessAllTable"></th><th>原邮箱 → 换绑后邮箱</th><th>AT 状态</th><th>Roxy 窗口</th><th>Profile</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="successAccountsBody"></tbody></table></div>
+        <div class="table-wrap success-table-wrap"><table class="success-table"><thead><tr><th><input type="checkbox" id="selectSuccessAllTable"></th><th>邮箱</th><th>AT</th><th>窗口</th><th>CDP端口</th><th>更新</th><th>操作</th></tr></thead><tbody id="successAccountsBody"></tbody></table></div>
       </article>
     </section>
 

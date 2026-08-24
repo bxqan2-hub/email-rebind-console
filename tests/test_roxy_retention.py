@@ -29,6 +29,7 @@ class FakeClient:
         self.events.append(f"open:{kwargs.get('require_proxy_exit_ip')}")
         return SimpleNamespace(
             profile_id="profile-1", preflight_exit_geo={"ip": "203.0.113.10"},
+            debugger_address="127.0.0.1:9333", ws_endpoint=None,
         )
 
     def cleanup_profile(self, _opened):
@@ -86,6 +87,7 @@ class RoxyRetentionTests(unittest.TestCase):
 
         self.assertEqual(result["roxy_browser_status"], "open")
         self.assertEqual(result["roxy_profile_id"], "profile-1")
+        self.assertEqual(result["roxy_cdp_port"], 9333)
         self.assertNotIn("driver.quit", events)
         self.assertNotIn("cleanup", events)
         self.assertIn("profile-1", roxy_flow._RETAINED)
@@ -161,6 +163,7 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertEqual(result["access_token"], "at-new")
         self.assertEqual(result["email"], "new@example.com")
         self.assertEqual(result["roxy_browser_status"], "open")
+        self.assertEqual(result["roxy_cdp_port"], 9333)
         self.assertNotIn("driver.quit", events)
 
     def test_close_button_deletes_profile_after_service_restart(self):
@@ -179,13 +182,17 @@ class RoxyRetentionTests(unittest.TestCase):
         client = FakeClient(events)
         roxy_flow._retain_browser(
             profile_id="profile-1", email="new@example.com", client=client,
-            opened=SimpleNamespace(profile_id="profile-1"), driver=driver,
+            opened=SimpleNamespace(
+                profile_id="profile-1", debugger_address="127.0.0.1:9333",
+                ws_endpoint=None,
+            ), driver=driver,
         )
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded):
             result = roxy_flow.refresh_retained_access_token("profile-1", "new@example.com")
 
         self.assertEqual(result["access_token"], "at-plus")
         self.assertEqual(result["email"], "new@example.com")
+        self.assertEqual(result["roxy_cdp_port"], 9333)
         self.assertNotIn("driver.quit", events)
 
     def test_refresh_reopens_same_profile_after_service_restart(self):
@@ -201,6 +208,33 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertEqual(open_existing.call_args.args[1], "profile-1")
         self.assertEqual(result["access_token"], "at-reopened")
         self.assertIn("profile-1", roxy_flow._RETAINED)
+
+    def test_cdp_port_supports_debugger_and_websocket_addresses(self):
+        self.assertEqual(roxy_flow._roxy_cdp_port(SimpleNamespace(
+            debugger_address="127.0.0.1:9222", ws_endpoint=None,
+        )), 9222)
+        self.assertEqual(roxy_flow._roxy_cdp_port(SimpleNamespace(
+            debugger_address=None,
+            ws_endpoint="ws://127.0.0.1:9444/devtools/browser/example",
+        )), 9444)
+        self.assertIsNone(roxy_flow._roxy_cdp_port(SimpleNamespace(
+            debugger_address="bad-address", ws_endpoint=None,
+        )))
+
+    def test_resolve_cdp_port_prefers_retained_profile(self):
+        events = []
+        roxy_flow._retain_browser(
+            profile_id="profile-1", email="new@example.com",
+            client=FakeClient(events),
+            opened=SimpleNamespace(
+                profile_id="profile-1", debugger_address="127.0.0.1:9555",
+                ws_endpoint=None,
+            ),
+            driver=FakeDriver(events),
+        )
+        with patch.object(roxy_flow, "_load_main_roxy") as loader:
+            self.assertEqual(roxy_flow.resolve_roxy_cdp_port("profile-1"), 9555)
+        loader.assert_not_called()
 
 
 if __name__ == "__main__":

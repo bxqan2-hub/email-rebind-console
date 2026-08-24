@@ -21,6 +21,20 @@ def create_app(*, recover: bool = True) -> Flask:
         store.recover_interrupted_tasks()
         store.recover_interrupted_access_token_refreshes()
         store.backfill_success_replacement_api_urls()
+        for account in store.list_accounts():
+            if (
+                account.get("status") == "success"
+                and account.get("roxy_browser_status") == "open"
+                and account.get("roxy_profile_id")
+            ):
+                try:
+                    port = roxy_flow.resolve_roxy_cdp_port(account["roxy_profile_id"])
+                    if port:
+                        store.set_success_roxy_cdp_port(int(account["id"]), port)
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "Roxy CDP 端口回填失败：account_id=%s", account.get("id")
+                    )
 
     @app.get("/")
     def index():

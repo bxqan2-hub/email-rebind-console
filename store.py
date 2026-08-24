@@ -1080,6 +1080,9 @@ def finish_access_token_refresh(account_id: int, result: dict) -> dict | None:
             "at_refreshed_at": now, "at_saved_at": now, "roxy_browser_status": "open",
             "updated_at": now,
         })
+        cdp_port = _valid_port(result.get("roxy_cdp_port"))
+        if cdp_port:
+            row["roxy_cdp_port"] = cdp_port
         row.pop("at_refresh_error", None)
         _write(_ACCOUNTS, rows)
         persisted = next((
@@ -1122,7 +1125,40 @@ def mark_roxy_profile_deleted(account_id: int) -> dict | None:
             "roxy_profile_id": "",
             "updated_at": now,
         })
+        row.pop("roxy_cdp_port", None)
         _write(_ACCOUNTS, rows)
+        return _public_account(row)
+
+
+def _valid_port(value: Any) -> int | None:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if 0 < port <= 65535 else None
+
+
+def set_success_roxy_cdp_port(account_id: int, port: int) -> dict | None:
+    """回填成功账号及其完成任务当前实际使用的 Roxy CDP 端口。"""
+    normalized = _valid_port(port)
+    if not normalized:
+        raise ValueError("Roxy CDP 端口无效")
+    with _LOCK:
+        rows = _read(_ACCOUNTS)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(account_id)), None)
+        if not row or row.get("status") != "success":
+            return None
+        now = _now()
+        row.update({"roxy_cdp_port": normalized, "updated_at": now})
+        tasks = _read(_TASKS)
+        for task in tasks:
+            if (
+                int(task.get("account_id") or 0) == int(account_id)
+                and task.get("status") == "success"
+            ):
+                task.update({"roxy_cdp_port": normalized, "updated_at": now})
+        _write(_ACCOUNTS, rows)
+        _write(_TASKS, tasks)
         return _public_account(row)
 
 
@@ -1279,6 +1315,7 @@ def finish_success(task_id: int, result: dict) -> None:
         access_token = str(result.get("access_token") or "").strip()
         verified_email = str(result.get("email") or task.get("new_email") or "").strip()
         profile_id = str(result.get("roxy_profile_id") or "").strip()
+        cdp_port = _valid_port(result.get("roxy_cdp_port"))
         task.update({
             "status": "success", "stage": "kept_open",
             "message": "换绑完成；AT 已获取，Roxy 窗口保持新邮箱登录态",
@@ -1293,6 +1330,9 @@ def finish_success(task_id: int, result: dict) -> None:
             "at_refresh_status": "success", "roxy_profile_id": profile_id,
             "roxy_browser_status": "open", "updated_at": now,
         })
+        if cdp_port:
+            task["roxy_cdp_port"] = cdp_port
+            account["roxy_cdp_port"] = cdp_port
         account.pop("active_task_id", None)
         account.pop("error", None)
         account.pop("email_change_uncertain", None)
