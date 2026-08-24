@@ -234,15 +234,26 @@ def create_app(*, recover: bool = True) -> Flask:
             transient_retries = max(0, min(int(data.get("transient_retries", settings.MAX_TRANSIENT_RETRIES)), 10))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "自动重试次数必须是 0~10 的整数"}), 400
-        if int(store.summary().get("proxy_available") or 0) < 1:
+        open_roxy_after = bool(data.get("open_roxy_after"))
+        required_proxies = 2 if open_roxy_after else 1
+        if int(store.summary().get("proxy_available") or 0) < required_proxies:
+            if open_roxy_after:
+                return jsonify({
+                    "ok": False,
+                    "error": "完成后打开 Roxy 需要至少两条可用代理：一条用于纯协议换绑，另一条用于 Roxy 登录",
+                }), 409
             return jsonify({"ok": False, "error": "换绑代理池没有可用代理，请先手动导入"}), 409
-        tasks = store.reserve_batch(ids, max_transient_retries=transient_retries)
+        tasks = store.reserve_batch(
+            ids, max_transient_retries=transient_retries,
+            open_roxy_after=open_roxy_after,
+        )
         if not tasks:
             return jsonify({"ok": False, "error": "没有可一对一配对的待换绑账号和替换邮箱"}), 409
         submitted = worker.submit_tasks(tasks, workers)
         return jsonify({
             "ok": True, "submitted": submitted, "workers": workers,
-            "transient_retries": transient_retries, "tasks": tasks,
+            "transient_retries": transient_retries,
+            "open_roxy_after": open_roxy_after, "tasks": tasks,
         })
 
     @app.post("/api/accounts/<int:account_id>/retry")

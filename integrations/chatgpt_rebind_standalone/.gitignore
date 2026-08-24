@@ -1,0 +1,14 @@
+outputs/*
+!outputs/
+!outputs/**/
+!outputs/**/.gitkeep
+__pycache__/
+*.pyc
+.env
+*.zip
+*.har
+*.jsonl
+login_bundle*.json
+access_token*.txt
+session_cookie*.txt
+auth_session*.json

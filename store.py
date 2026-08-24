@@ -100,7 +100,7 @@ def _normalize_proxy_url(raw: str, username: str = "", password: str = "") -> st
                 username = username or chunks[2]
                 password = password or ":".join(chunks[3:])
                 # 供应商的 host:port:user:pass 通常是 SOCKS5 凭据；此前误按
-                # HTTP CONNECT 导致 1024proxy 节点全部在创建 Roxy 前失败。
+                # HTTP CONNECT 会导致此类 SOCKS5 节点在协议请求或 Roxy 登录前失败。
                 value = f"socks5h://{host}:{port}"
             else:
                 value = f"{'socks5h' if username else 'http'}://{value}"
@@ -277,7 +277,10 @@ def delete_proxy(proxy_id: int) -> dict:
             return {"deleted": False, "reason": "not_found"}
         active_task = next((
             task for task in _read(_TASKS)
-            if int(task.get("proxy_id") or 0) == int(proxy_id)
+            if (
+                int(task.get("proxy_id") or 0) == int(proxy_id)
+                or int(task.get("roxy_proxy_id") or 0) == int(proxy_id)
+            )
             and task.get("status") in {"queued", "running"}
         ), None)
         if active_task:
@@ -478,7 +481,10 @@ def delete_source_account(account_id: int) -> dict:
                 "reason": "in_use",
                 "task_id": int((active_task or {}).get("id") or row.get("active_task_id") or 0),
             }
-        if row.get("status") == "success" and row.get("roxy_browser_status") != "deleted":
+        if (
+            row.get("status") == "success"
+            and (row.get("roxy_browser_status") == "open" or row.get("roxy_profile_id"))
+        ):
             return {"deleted": False, "reason": "window_open"}
         if row.get("status") == "review":
             return {"deleted": False, "reason": "result_locked"}
@@ -612,6 +618,7 @@ def reserve_batch(
     account_ids: Iterable[int] | None = None,
     *,
     max_transient_retries: int | None = None,
+    open_roxy_after: bool = False,
 ) -> list[dict]:
     pairs = preview_pairs(account_ids)
     if not pairs:
@@ -640,7 +647,8 @@ def reserve_batch(
                 "status": "queued",
                 "stage": "queued",
                 "attempt": 1,
-                "message": "已完成一对一占用，等待 Roxy 浏览器",
+                "message": "已完成一对一占用，等待纯协议换绑",
+                "open_roxy_after": bool(open_roxy_after),
                 "created_at": now,
             }
             if max_transient_retries is not None:
@@ -705,7 +713,7 @@ def reserve_failed_account_retry(
             "status": "queued",
             "stage": "manual_retry",
             "attempt": attempt,
-            "message": f"第 {attempt} 次尝试：失败重试已提交，等待 Roxy 浏览器",
+            "message": f"第 {attempt} 次尝试：失败重试已提交，等待纯协议换绑",
             "created_at": now,
             "updated_at": now,
         }
@@ -716,6 +724,7 @@ def reserve_failed_account_retry(
             task["retry_of_task_id"] = int(previous.get("id") or 0)
             previous["manual_retry_task_id"] = task["id"]
             previous["updated_at"] = now
+            task["open_roxy_after"] = bool(previous.get("open_roxy_after"))
         tasks.append(task)
         previous_error = str(account.get("error") or "").strip()
         account.update({"status": "queued", "active_task_id": task["id"], "updated_at": now})
@@ -873,7 +882,8 @@ def reserve_retry(previous_task_id: int) -> dict | None:
             "status": "queued", "stage": "auto_retry", "attempt": attempt,
             "root_task_id": int(previous.get("root_task_id") or previous.get("id") or 0),
             "retry_of_task_id": int(previous.get("id") or 0),
-            "message": f"第 {attempt} 次尝试：已自动切换替换邮箱，等待 Roxy 浏览器",
+            "message": f"第 {attempt} 次尝试：已自动切换替换邮箱，等待纯协议换绑",
+            "open_roxy_after": bool(previous.get("open_roxy_after")),
             "created_at": now, "updated_at": now,
         }
         tasks.append(task)
@@ -1316,11 +1326,25 @@ def finish_success(task_id: int, result: dict) -> None:
         verified_email = str(result.get("email") or task.get("new_email") or "").strip()
         profile_id = str(result.get("roxy_profile_id") or "").strip()
         cdp_port = _valid_port(result.get("roxy_cdp_port"))
+        browser_status = str(result.get("roxy_browser_status") or "not_opened").strip()
+        open_error = str(result.get("roxy_open_error") or "").strip()
+        if browser_status == "open":
+            stage = "kept_open"
+            message = "纯协议换绑完成；AT 已获取，Roxy 窗口保持替换邮箱登录态"
+        elif browser_status == "open_failed":
+            stage = "protocol_verified"
+            message = f"纯协议换绑完成；AT 已获取；Roxy 扩展打开失败：{open_error}"[:600]
+        else:
+            stage = "protocol_verified"
+            message = "纯协议换绑完成；AT 已获取，未打开 Roxy"
         task.update({
-            "status": "success", "stage": "kept_open",
-            "message": "换绑完成；AT 已获取，Roxy 窗口保持新邮箱登录态",
+            "status": "success", "stage": stage,
+            "message": message,
             "completed_at": now, "updated_at": now, "verified_email": verified_email,
-            "roxy_profile_id": profile_id, "roxy_browser_status": "open",
+            "roxy_profile_id": profile_id, "roxy_browser_status": browser_status,
+            "protocol_engine": str(result.get("protocol_engine") or "chatgpt-rebind-standalone"),
+            "protocol_upstream_commit": str(result.get("protocol_upstream_commit") or ""),
+            "roxy_open_requested": bool(result.get("roxy_open_requested")),
         })
         account.update({
             "status": "success", "current_email": verified_email, "new_email": verified_email,
@@ -1328,8 +1352,22 @@ def finish_success(task_id: int, result: dict) -> None:
             "access_token": access_token, "rebound_at": now, "at_refreshed_at": now,
             "at_saved_at": now,
             "at_refresh_status": "success", "roxy_profile_id": profile_id,
-            "roxy_browser_status": "open", "updated_at": now,
+            "roxy_browser_status": browser_status,
+            "protocol_engine": task["protocol_engine"],
+            "protocol_upstream_commit": task["protocol_upstream_commit"],
+            "roxy_open_requested": task["roxy_open_requested"],
+            "updated_at": now,
         })
+        if open_error:
+            task["roxy_open_error"] = open_error
+            account["roxy_open_error"] = open_error
+        else:
+            task.pop("roxy_open_error", None)
+            account.pop("roxy_open_error", None)
+        for key in ("roxy_proxy_id", "roxy_proxy_display"):
+            if result.get(key) is not None:
+                task[key] = result.get(key)
+                account[key] = result.get(key)
         if cdp_port:
             task["roxy_cdp_port"] = cdp_port
             account["roxy_cdp_port"] = cdp_port
@@ -1426,6 +1464,7 @@ def retry_transient_failure(task_id: int, error: str, max_retries: int) -> dict:
             "retry_of_task_id": int(previous.get("id") or 0),
             "transient_retry_count": next_count,
             "message": f"第 {next_attempt} 次尝试：临时故障自动重试，继续使用当前替换邮箱",
+            "open_roxy_after": bool(previous.get("open_roxy_after")),
             "created_at": now, "updated_at": now,
         }
         if previous.get("max_transient_retries") is not None:
@@ -1453,7 +1492,10 @@ def retry_transient_failure(task_id: int, error: str, max_retries: int) -> dict:
 
 def recover_interrupted_tasks() -> int:
     active = [row for row in _read(_TASKS) if row.get("status") in {"queued", "running"}]
-    uncertain_stages = {"submit_new_email_otp", "changed", "relogin_new", "verified", "kept_open"}
+    uncertain_stages = {
+        "submit_new_email_otp", "changed", "protocol_relogin_new", "protocol_verified",
+        "open_roxy_after_protocol", "relogin_new", "verified", "kept_open",
+    }
     for row in active:
         task_id = int(row.get("id") or 0)
         if row.get("stop_requested"):

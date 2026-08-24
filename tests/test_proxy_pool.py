@@ -57,7 +57,6 @@ class ProxyPoolTests(unittest.TestCase):
                 seen.append(kwargs["proxy_url"])
                 if len(seen) == 1:
                     raise roxy_flow.ProxyFailure("Roxy 代理出口快速检测失败")
-                kwargs["proxy_verified"]({"ip": "203.0.113.20", "country": "US"})
                 return {"email": kwargs["new_email"], "access_token": "at-new"}
 
             with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
@@ -66,7 +65,7 @@ class ProxyPoolTests(unittest.TestCase):
                     patch.object(store, "_PROXIES", root / "proxies.json"), \
                     patch.object(store, "_PROXY_RANDOM", fake_random), \
                     patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
-                    patch.object(worker.roxy_flow, "perform_email_rebind", side_effect=perform):
+                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=perform):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 store.import_proxies("http://first.example:8000\nhttp://second.example:8000")
@@ -79,7 +78,7 @@ class ProxyPoolTests(unittest.TestCase):
                 self.assertEqual(proxies[0]["status"], "failed")
                 self.assertIn("代理出口", proxies[0]["failure_reason"])
                 self.assertEqual(proxies[1]["status"], "available")
-                self.assertEqual(proxies[1]["last_exit_ip"], "203.0.113.20")
+                self.assertEqual(proxies[1]["success_count"], 1)
                 self.assertEqual(store.list_replacements()[0]["status"], "used")
                 self.assertEqual(store.list_accounts()[0]["status"], "success")
                 final_task = store.list_tasks()[0]
@@ -94,7 +93,7 @@ class ProxyPoolTests(unittest.TestCase):
                     patch.object(store, "_TASKS", root / "tasks.json"), \
                     patch.object(store, "_PROXIES", root / "proxies.json"), \
                     patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
-                    patch.object(worker.roxy_flow, "perform_email_rebind", side_effect=roxy_flow.ProxyFailure("代理超时")):
+                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=roxy_flow.ProxyFailure("代理超时")):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 store.import_proxies("http://only.example:8000")

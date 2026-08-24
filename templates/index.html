@@ -17,12 +17,12 @@
     <div class="side-note">与主站仅通过文本格式联动；本分站不读写主站账号文件。</div>
   </aside>
   <main>
-    <header><div><p class="eyebrow">EMAIL REBIND</p><h1>邮箱换绑工作台</h1><p class="sub">主站账号导入 → 替换邮箱一对一绑定 → Roxy 自动换绑 → 新邮箱登录刷新 AT</p></div><div class="health"><span></span>本地服务在线</div></header>
+    <header><div><p class="eyebrow">EMAIL REBIND</p><h1>邮箱换绑工作台</h1><p class="sub">主站账号导入 → 替换邮箱一对一绑定 → 纯协议换绑 → 获取新邮箱 AT</p></div><div class="health"><span></span>本地服务在线</div></header>
 
     <section class="stats" id="stats"></section>
     <div class="eligibility-note"><strong>执行前检查</strong><span>新邮箱不能已绑定其他 OpenAI 账号；账号需可使用 Settings → Account 自助换绑。单账号最多 24 小时 2 次、生命周期 20 次。</span></div>
-    <div class="logic-note"><strong>双重自动轮换</strong><span>每个账号先从“换绑代理”池随机选择一条，创建 Roxy 前检测真实出口；检测失败立即标记该代理并随机换下一条，不消耗替换邮箱。收不到新邮箱验证码、取码 API 超时或新邮箱已被占用时，才隔离该邮箱并为同一原账号换下一个邮箱。</span></div>
-    <div class="logic-note keep-open-note"><strong>成功窗口规则</strong><span>换绑失败会自动关闭并删除临时 Roxy 环境；换绑成功并获取新 AT 后，Roxy 窗口保持新邮箱登录态。需要时可先“重新获取 AT”，最终点击“关闭并删除”会同时关闭窗口并永久删除对应 Roxy Profile，避免环境堆积。</span></div>
+    <div class="logic-note"><strong>双重自动轮换</strong><span>每个账号先从“换绑代理”池随机选择一条执行纯协议流程；代理网络失败时立即标记并随机换下一条，不消耗替换邮箱。收不到新邮箱验证码、取码 API 超时或新邮箱已被占用时，才隔离该邮箱并为同一原账号换下一个邮箱。</span></div>
+    <div class="logic-note keep-open-note"><strong>纯协议模式</strong><span>换绑核心使用 chatgpt-rebind-standalone：默认全程不打开浏览器；勾选“完成后开 Roxy”时，纯协议换绑成功后才额外选择另一条代理，新建 Roxy 窗口并登录替换邮箱。</span></div>
 
     <section class="view" id="view-workspace">
       <div class="grid three">
@@ -40,14 +40,14 @@
         </article>
         <article class="card">
           <div class="card-head"><div><span class="step amber">03</span><h2>导入换绑代理</h2></div><span class="format">每行一条</span></div>
-          <p>每个账号随机取一条；带认证但未写协议的格式默认按 SOCKS5 导入。Roxy 创建前检测出口，失败代理自动退出分配并切换下一条。</p>
+          <p>每个账号随机取一条执行纯协议换绑；带认证但未写协议的格式默认按 SOCKS5 导入。勾选完成后开 Roxy 时，成功后会再选另一条代理打开窗口。</p>
           <textarea id="proxyImport" placeholder="http://user:pass@host:port&#10;socks5h://user:pass@host:port&#10;host:port:user:pass"></textarea>
           <button class="btn primary" id="importProxies">加入换绑代理池</button>
         </article>
       </div>
 
       <article class="card pairing-card">
-        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对</h2><p>勾选待换绑账号；替换邮箱按顺序绑定，换绑代理在任务开始时随机选择。登录/网络临时失败会按设置次数重新走流程；换绑确认后的新邮箱登录也会重新获取验证码和 AT。</p></div><div class="actions"><label>并发 <input id="workers" type="number" min="1" max="10" value="2"></label><label>自动重试 <input id="transientRetries" type="number" min="0" max="10" value="2"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn success" id="startRebind">开始换绑</button></div></div>
+        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对</h2><p>默认使用纯协议完成原邮箱登录、换绑、新邮箱重登和 AT 获取，不启动 Roxy。需要保留浏览器登录态时勾选“完成后开 Roxy”，系统会在换绑完成后额外选择第二条代理打开窗口。</p></div><div class="actions"><label>并发 <input id="workers" type="number" min="1" max="10" value="2"></label><label>自动重试 <input id="transientRetries" type="number" min="0" max="10" value="2"></label><label class="protocol-roxy-option"><input id="openRoxyAfter" type="checkbox"> 完成后开 Roxy</label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn success" id="startRebind">开始换绑</button></div></div>
         <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectAll"></th><th>原邮箱</th><th>账号状态</th><th>一对一替换邮箱</th><th>操作</th></tr></thead><tbody id="pairBody"></tbody></table></div>
       </article>
 
@@ -57,7 +57,7 @@
       </article>
 
       <article class="card success-account-card">
-        <div class="card-head responsive"><div><h2>换绑完成账号</h2><p>成功窗口默认保持登录；重新获取 AT 后会原子保存，界面自动刷新并显示“AT 已更新”或“AT 未变化”。选择账号后可批量复制 AT 或清理账号；“复制AT”只复制该账号的单独 AT；“关闭并删除”会永久删除对应 Roxy Profile。</p></div><div class="actions"><label><input type="checkbox" id="selectSuccessAll"> 全选账号</label><button class="btn primary" id="copySelectedAT" disabled>复制所选 AT</button><button class="btn danger" id="cleanupSelectedAccounts" disabled>清理所选账号</button></div></div>
+        <div class="card-head responsive"><div><h2>换绑完成账号</h2><p>纯协议结果直接保存 AT；只有勾选“完成后开 Roxy”的任务才会显示窗口和 CDP 端口，并支持刷新 AT 或关闭环境。</p></div><div class="actions"><label><input type="checkbox" id="selectSuccessAll"> 全选账号</label><button class="btn primary" id="copySelectedAT" disabled>复制所选 AT</button><button class="btn danger" id="cleanupSelectedAccounts" disabled>清理所选账号</button></div></div>
         <div class="table-wrap success-table-wrap"><table class="success-table"><thead><tr><th><input type="checkbox" id="selectSuccessAllTable"></th><th>邮箱</th><th>AT</th><th>窗口</th><th>CDP端口</th><th>更新</th><th>操作</th></tr></thead><tbody id="successAccountsBody"></tbody></table></div>
       </article>
     </section>

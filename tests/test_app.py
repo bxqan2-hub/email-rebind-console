@@ -121,7 +121,7 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(task["max_transient_retries"], 4)
                 store.finish_success(task["id"], {
                     "email": "new@example.com", "access_token": "at-new",
-                    "roxy_profile_id": "profile-1",
+                    "roxy_profile_id": "profile-1", "roxy_browser_status": "open",
                 })
                 account_id = store.list_accounts()[0]["id"]
                 exported = client.get("/api/export")
@@ -253,10 +253,11 @@ class AppTests(unittest.TestCase):
         self.assertIn("document.execCommand('copy')", script)
         self.assertIn("原邮箱----换绑后邮箱----密码----2FA----AT", html)
         self.assertIn("原邮箱----换绑后邮箱----替换邮箱URL----AT", html)
-        self.assertIn("复制AT", html)
+        self.assertIn("复制所选 AT", html)
         self.assertNotIn("id=\"downloadExport\"", html)
-        self.assertIn("界面自动刷新", html)
-        self.assertIn("成功窗口规则", html)
+        self.assertIn("纯协议模式", html)
+        self.assertIn('id="openRoxyAfter"', html)
+        self.assertIn("open_roxy_after", script)
         self.assertIn('class="table-wrap success-table-wrap"', html)
         self.assertIn('class="success-table"', html)
         self.assertIn("CDP端口", html)

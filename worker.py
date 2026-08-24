@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import roxy_flow
+import protocol_flow
 import settings
 import store
 
@@ -17,13 +18,15 @@ _ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-r
 
 
 _TRANSIENT_STAGES = {
-    "queued", "running", "open_roxy", "check_proxy", "login_old", "login_password", "login_totp",
+    "queued", "running", "protocol_login_old", "protocol_reauth", "check_proxy", "login_old", "login_password", "login_totp",
     "login_email_otp", "submit_login_email_otp", "check_email_eligibility",
     "submit_new_email",
 }
 _NON_RETRYABLE_MARKERS = (
     "不符合自助换绑条件", "社交登录账号", "需要密码", "没有 mfa", "没有对应的 api",
     "频率或次数限制", "频率限制", "次数限制", "被拒绝", "rate limit",
+    "not_eligible", "eligible=false", "用户名或密码错误", "totp 校验失败",
+    "email/password/totp_secret 不能为空",
 )
 
 
@@ -37,7 +40,7 @@ def _should_auto_retry(task: dict, exc: Exception) -> bool:
     stage = str(task.get("stage") or "").strip()
     if stage == "submit_new_email_otp":
         return any(marker in message for marker in ("未取得服务端响应", "可使用失败重试", "http 401", "http 422", "http 400", "http 409"))
-    if stage in {"changed", "relogin_new", "verified", "kept_open", "manual_review", "wait_new_email_otp"}:
+    if stage in {"changed", "relogin_new", "protocol_relogin_new", "verified", "protocol_verified", "kept_open", "manual_review", "wait_new_email_otp"}:
         return False
     return isinstance(exc, TimeoutError) or stage in _TRANSIENT_STAGES
 
@@ -76,6 +79,86 @@ def submit_access_token_refresh(account_id: int) -> dict:
         store.fail_access_token_refresh(account_id, f"后台任务提交失败：{type(exc).__name__}: {exc}")
         raise
     return {"accepted": True, "account_id": int(account_id)}
+
+
+def _open_roxy_after_protocol(
+    *, task_id: int, task: dict, account: dict, replacement: dict,
+    protocol_result: dict, protocol_proxy: dict,
+    retry_limit: int, stop_check,
+) -> dict:
+    """换绑已经成功后，额外选择另一条代理创建 Roxy 登录窗口。"""
+    excluded = {int(protocol_proxy.get("id") or 0)}
+    last_error = "没有可用于 Roxy 扩展登录的第二条代理"
+    for roxy_attempt in range(1, settings.MAX_PROXY_ATTEMPTS + 1):
+        if stop_check():
+            break
+        roxy_proxy = store.pick_random_proxy(excluded)
+        if not roxy_proxy:
+            break
+        proxy_id = int(roxy_proxy.get("id") or 0)
+        excluded.add(proxy_id)
+        proxy_display = str(roxy_proxy.get("display") or f"代理 #{proxy_id}")
+        store.update_task(
+            task_id, status="running", stage="open_roxy_after_protocol",
+            message=f"纯协议换绑已完成；第 {roxy_attempt} 条额外代理 {proxy_display} 正在打开 Roxy",
+            roxy_proxy_id=proxy_id, roxy_proxy_display=proxy_display,
+        )
+
+        def roxy_progress(stage: str, message: str) -> None:
+            if stop_check():
+                raise roxy_flow.TaskStopRequested("用户已请求停止")
+            store.update_task(
+                task_id, status="running", stage=f"roxy_{stage}",
+                message=f"纯协议换绑已完成；Roxy 扩展：{message}",
+                email_change_confirmed=True,
+            )
+
+        def roxy_proxy_verified(exit_geo: dict) -> None:
+            store.mark_proxy_success(
+                proxy_id, task_id=task_id,
+                old_email=str(account.get("old_email") or ""), exit_geo=exit_geo,
+            )
+
+        try:
+            roxy_result = roxy_flow.perform_replacement_login(
+                new_email=str(replacement.get("email") or ""),
+                password=str(account.get("password") or ""),
+                totp_secret=str(account.get("totp_secret") or ""),
+                api_url=str(replacement.get("api_url") or ""),
+                proxy_url=str(roxy_proxy.get("proxy_url") or ""),
+                progress=roxy_progress,
+                proxy_verified=roxy_proxy_verified,
+                max_relogin_retries=retry_limit,
+                stop_check=stop_check,
+            )
+            return {
+                **protocol_result, **roxy_result,
+                "protocol_engine": protocol_result.get("protocol_engine"),
+                "protocol_upstream_commit": protocol_result.get("protocol_upstream_commit"),
+                "roxy_open_requested": True,
+                "roxy_proxy_id": proxy_id,
+                "roxy_proxy_display": proxy_display,
+            }
+        except roxy_flow.ProxyFailure as exc:
+            last_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            store.mark_proxy_failure(
+                proxy_id, task_id=task_id,
+                old_email=str(account.get("old_email") or ""), error=last_error,
+            )
+            continue
+        except roxy_flow.TaskStopRequested:
+            last_error = "用户在纯协议完成后停止了 Roxy 扩展登录"
+            break
+        except Exception as exc:  # 换绑已经成功，Roxy 扩展失败不能回滚身份
+            last_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            logger.exception("纯协议已成功，但 Roxy 扩展登录失败：task=%s", task_id)
+            break
+    return {
+        **protocol_result,
+        "roxy_open_requested": True,
+        "roxy_browser_status": "open_failed",
+        "roxy_open_error": last_error,
+    }
 
 
 def _run(task_id: int) -> None:
@@ -127,9 +210,15 @@ def _run(task_id: int) -> None:
             excluded_proxy_ids.add(int(active_proxy.get("id") or 0))
         store.assign_task_proxy(current_task_id, active_proxy, proxy_attempt)
         proxy_display = str(active_proxy.get("display") or f"代理 #{active_proxy.get('id')}")
+        initial_stage = "open_roxy" if login_only else "protocol_login_old"
+        initial_message = (
+            f"第 {attempt} 次登录补救 / 第 {proxy_attempt} 条代理：使用 {proxy_display} 打开 Roxy"
+            if login_only else
+            f"第 {attempt} 次纯协议换绑 / 第 {proxy_attempt} 条代理：使用 {proxy_display} 登录原邮箱"
+        )
         store.update_task(
-            current_task_id, status="running", stage="open_roxy",
-            message=f"第 {attempt} 次邮箱尝试 / 第 {proxy_attempt} 条代理：使用 {proxy_display} 检测并打开 Roxy",
+            current_task_id, status="running", stage=initial_stage,
+            message=initial_message,
         )
 
         def progress(stage: str, message: str) -> None:
@@ -170,19 +259,28 @@ def _run(task_id: int) -> None:
                     stop_check=stop_check,
                 )
             else:
-                result = roxy_flow.perform_email_rebind(
+                result = protocol_flow.perform_email_rebind(
                     old_email=str(account.get("old_email") or ""),
                     new_email=str(replacement.get("email") or ""),
                     password=str(account.get("password") or ""),
                     totp_secret=str(account.get("totp_secret") or ""),
-                    source_api_url=str(account.get("api_url") or ""),
                     api_url=str(replacement.get("api_url") or ""),
                     proxy_url=str(active_proxy.get("proxy_url") or ""),
                     progress=progress,
-                    proxy_verified=proxy_verified,
-                    max_relogin_retries=retry_limit,
                     stop_check=stop_check,
                 )
+                change_confirmed = True
+                store.mark_proxy_success(
+                    int(active_proxy.get("id") or 0), task_id=current_task_id,
+                    old_email=str(account.get("old_email") or ""),
+                )
+                if bool(task.get("open_roxy_after")):
+                    result = _open_roxy_after_protocol(
+                        task_id=current_task_id, task=task, account=account,
+                        replacement=replacement, protocol_result=result,
+                        protocol_proxy=active_proxy, retry_limit=retry_limit,
+                        stop_check=stop_check,
+                    )
             store.finish_success(current_task_id, result)
             return
         except roxy_flow.TaskStopRequested as exc:
