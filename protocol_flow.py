@@ -23,6 +23,7 @@ UPSTREAM_ROOT = Path(__file__).resolve().parent / "integrations" / "chatgpt_rebi
 if str(UPSTREAM_ROOT) not in sys.path:
     sys.path.insert(0, str(UPSTREAM_ROOT))
 
+from rebind_core.mfa_login import MfaLoginError, login_with_password_and_totp  # noqa: E402
 from rebind_core.pipeline import RebindResult, run_rebind_email  # noqa: E402
 
 
@@ -105,6 +106,49 @@ def run_upstream_rebind(
         "protocol_engine": "chatgpt-rebind-standalone/run_rebind_email",
         "protocol_upstream_commit": UPSTREAM_COMMIT,
         "protocol_bundle_path": str(bundle_path),
+        "roxy_profile_id": "",
+        "roxy_browser_status": "not_opened",
+    }
+
+
+def refresh_access_token_protocol(
+    *,
+    email: str,
+    password: str,
+    totp_secret: str,
+    proxy_url: str = "",
+    progress: Callable[[str, str], None] | None = None,
+) -> dict:
+    """不打开 Roxy 时，用上游纯协议登录一次并导出新的 AT。"""
+    progress = progress or (lambda _stage, _message: None)
+    target_email = str(email or "").strip()
+    progress("protocol_at_refresh", f"未检测到 Roxy 窗口，使用纯协议登录 {target_email} 获取 AT")
+    try:
+        login = login_with_password_and_totp(
+            target_email,
+            str(password or "").strip(),
+            str(totp_secret or "").strip(),
+            proxy=str(proxy_url or "").strip() or None,
+        )
+    except MfaLoginError:
+        raise
+    observed = str(login.result.email or login.email or target_email).strip()
+    if target_email and observed.lower() != target_email.lower():
+        raise RuntimeError(f"纯协议登录邮箱不匹配：期望 {target_email}，实际 {observed or '空'}")
+    access_token = str(login.access_token or "").strip()
+    if not access_token:
+        raise RuntimeError("纯协议登录完成，但未返回 access_token")
+    progress("protocol_at_refreshed", "纯协议登录完成，新的 AT 已取得")
+    return {
+        "email": observed or target_email,
+        "access_token": access_token,
+        "session": {
+            "accessToken": access_token,
+            "email": observed or target_email,
+            "sessionToken": login.session_token,
+        },
+        "protocol_engine": "chatgpt-rebind-standalone/login_with_password_and_totp",
+        "protocol_upstream_commit": UPSTREAM_COMMIT,
         "roxy_profile_id": "",
         "roxy_browser_status": "not_opened",
     }

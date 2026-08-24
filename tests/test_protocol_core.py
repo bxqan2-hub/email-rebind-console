@@ -63,6 +63,28 @@ class ProtocolFlowTests(unittest.TestCase):
                 proxy_url="http://proxy.example:8080",
             )
 
+    def test_protocol_at_refresh_logs_in_once_and_returns_not_opened_result(self):
+        login = Mock()
+        login.email = "new@example.com"
+        login.access_token = "at-refreshed"
+        login.session_token = "session-refreshed"
+        login.result.email = "new@example.com"
+        progress = []
+        with patch.object(protocol_flow, "login_with_password_and_totp", return_value=login) as login_call:
+            result = protocol_flow.refresh_access_token_protocol(
+                email="new@example.com", password="Password!",
+                totp_secret="JBSWY3DPEHPK3PXP", proxy_url="http://proxy.example:8080",
+                progress=lambda stage, _message: progress.append(stage),
+            )
+
+        login_call.assert_called_once_with(
+            "new@example.com", "Password!", "JBSWY3DPEHPK3PXP",
+            proxy="http://proxy.example:8080",
+        )
+        self.assertEqual(result["access_token"], "at-refreshed")
+        self.assertEqual(result["roxy_browser_status"], "not_opened")
+        self.assertEqual(progress, ["protocol_at_refresh", "protocol_at_refreshed"])
+
     def test_stop_requested_after_upstream_success_does_not_hide_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle_path = Path(tmp) / "login_bundle.json"

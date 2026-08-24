@@ -50,19 +50,32 @@ def _refresh_access_token(account_id: int) -> None:
     if not account:
         store.fail_access_token_refresh(account_id, "成功账号不存在")
         return
+    profile_id = str(account.get("roxy_profile_id") or "").strip()
+    expected_email = str(account.get("new_email") or account.get("current_email") or "").strip()
+    roxy_open = account.get("roxy_browser_status") == "open" and bool(profile_id)
     try:
-        result = roxy_flow.refresh_retained_access_token(
-            str(account.get("roxy_profile_id") or ""),
-            str(account.get("new_email") or account.get("current_email") or ""),
-        )
+        if roxy_open:
+            logger.info("成功账号 #%s 检测到 Roxy 窗口，复用窗口更新 AT", account_id)
+            result = roxy_flow.refresh_retained_access_token(profile_id, expected_email)
+        else:
+            proxy = store.pick_random_proxy() or {}
+            proxy_url = str(proxy.get("proxy_url") or "").strip()
+            logger.info(
+                "成功账号 #%s 未检测到 Roxy 窗口，执行一次纯协议登录更新 AT%s",
+                account_id, f"（代理 {proxy.get('display') or proxy.get('id')}）" if proxy_url else "",
+            )
+            result = protocol_flow.refresh_access_token_protocol(
+                email=expected_email,
+                password=str(account.get("password") or ""),
+                totp_secret=str(account.get("totp_secret") or ""),
+                proxy_url=proxy_url,
+            )
         store.finish_access_token_refresh(account_id, result)
     except Exception as exc:  # noqa: BLE001 - 操作结果必须回写页面状态
         logger.exception("成功账号 #%s 重新获取 AT 失败", account_id)
         store.fail_access_token_refresh(
             account_id, f"{type(exc).__name__}: {str(exc)[:500]}",
-            browser_open=roxy_flow.retained_profile_is_connected(
-                str(account.get("roxy_profile_id") or ""),
-            ),
+            browser_open=roxy_open and roxy_flow.retained_profile_is_connected(profile_id),
         )
 
 
@@ -72,7 +85,7 @@ def submit_access_token_refresh(account_id: int) -> dict:
         current = store.get_success_account_context(account_id)
         if current and current.get("at_refresh_status") == "running":
             return {"accepted": False, "busy": True, "error": "该账号正在重新获取 AT"}
-        return {"accepted": False, "busy": False, "error": "成功账号或保留的 Roxy 环境不存在"}
+        return {"accepted": False, "busy": False, "error": "成功账号不存在或无法启动 AT 检查"}
     try:
         _ACTION_EXECUTOR.submit(_refresh_access_token, int(account_id))
     except Exception as exc:

@@ -1056,8 +1056,6 @@ def begin_access_token_refresh(account_id: int) -> dict | None:
         if (
             not row
             or row.get("status") != "success"
-            or row.get("roxy_browser_status") != "open"
-            or not row.get("roxy_profile_id")
         ):
             return None
         if row.get("at_refresh_status") == "running":
@@ -1087,9 +1085,15 @@ def finish_access_token_refresh(account_id: int, result: dict) -> dict | None:
         row.update({
             "access_token": access_token, "at_refresh_status": "success",
             "at_token_changed": token_changed,
-            "at_refreshed_at": now, "at_saved_at": now, "roxy_browser_status": "open",
+            "at_refreshed_at": now, "at_saved_at": now,
             "updated_at": now,
         })
+        if "roxy_browser_status" in result:
+            row["roxy_browser_status"] = str(result.get("roxy_browser_status") or "not_opened")
+        if "roxy_profile_id" in result:
+            row["roxy_profile_id"] = str(result.get("roxy_profile_id") or "").strip()
+        if row.get("roxy_browser_status") != "open" or not row.get("roxy_profile_id"):
+            row.pop("roxy_cdp_port", None)
         cdp_port = _valid_port(result.get("roxy_cdp_port"))
         if cdp_port:
             row["roxy_cdp_port"] = cdp_port

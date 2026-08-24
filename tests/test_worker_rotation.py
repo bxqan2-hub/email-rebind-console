@@ -332,6 +332,42 @@ class WorkerRotationTests(unittest.TestCase):
                 )
                 self.assertEqual(store.list_accounts()[0]["roxy_browser_status"], "open")
 
+    def test_success_account_refresh_without_roxy_uses_one_protocol_login(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(worker.protocol_flow, "refresh_access_token_protocol", return_value={
+                        "email": "new@example.com", "access_token": "at-protocol-refresh",
+                        "roxy_profile_id": "", "roxy_browser_status": "not_opened",
+                    }) as refresh_protocol, \
+                    patch.object(worker.roxy_flow, "refresh_retained_access_token") as refresh_roxy:
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies("http://proxy.example:8080")
+                task = store.reserve_batch()[0]
+                store.finish_success(task["id"], {
+                    "email": "new@example.com", "access_token": "at-old",
+                    "roxy_profile_id": "", "roxy_browser_status": "not_opened",
+                })
+                account_id = store.list_accounts()[0]["id"]
+                self.assertIsNotNone(store.begin_access_token_refresh(account_id))
+                worker._refresh_access_token(account_id)
+
+                refresh_roxy.assert_not_called()
+                refresh_protocol.assert_called_once()
+                kwargs = refresh_protocol.call_args.kwargs
+                self.assertEqual(kwargs["email"], "new@example.com")
+                self.assertEqual(kwargs["password"], "Password!")
+                self.assertEqual(kwargs["totp_secret"], "JBSWY3DPEHPK3PXP")
+                self.assertEqual(kwargs["proxy_url"], "http://proxy.example:8080")
+                account = store.list_accounts()[0]
+                self.assertEqual(store.get_success_access_token(account_id), "at-protocol-refresh")
+                self.assertEqual(account["roxy_browser_status"], "not_opened")
+                self.assertFalse(account.get("roxy_profile_id"))
+
 
 if __name__ == "__main__":
     unittest.main()
