@@ -649,6 +649,22 @@ $("refreshQr").onclick = () => refreshAccount(state.modalAccountId);
 document.querySelectorAll(".step").forEach(button => {
   button.onclick = () => goStep(Number(button.dataset.step));
 });
+const REBIND_PARENT_ORIGIN = (() => {
+  try { return document.referrer ? new URL(document.referrer).origin : ""; }
+  catch { return ""; }
+})();
+window.addEventListener("message", event => {
+  if (!REBIND_PARENT_ORIGIN || event.source !== window.parent || event.origin !== REBIND_PARENT_ORIGIN) return;
+  const payload = event.data && typeof event.data === "object" ? event.data : {};
+  if (payload.type !== "email-rebind:push-at") return;
+  const match = String(payload.accessToken || "").match(JWT_RE);
+  if (!match) return;
+  const email = String(payload.email || "").trim();
+  $("tokenInput").value = email ? `${email}|${match[1]}` : match[1];
+  $("importStatus").textContent = "已从换绑完成账号自动填入 AT";
+  updateInputCounts();
+  $("tokenInput").focus();
+});
 document.addEventListener("keydown", event => { if (event.key === "Escape") closeQr(); });
 setInterval(() => {
   document.querySelectorAll("[data-expiry]").forEach(node => {
