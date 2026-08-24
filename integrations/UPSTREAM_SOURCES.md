@@ -28,6 +28,9 @@ Authenticated SOCKS5 is a local compatibility extension: Chromium receives a
 loopback HTTP CONNECT endpoint while the API/Sentinel path connects to the same
 SOCKS5 host with its credentials. The bridge is memory-only, loopback-bound, and
 never writes proxy credentials to logs or task payloads.
+On Windows, the local Sentinel Node bridge is launched with `CREATE_NO_WINDOW`;
+this is a process-display adapter only and leaves the upstream Sentinel payload
+and protocol unchanged.
 
 Before updating, fetch the source repository, compare it with the vendored tree,
 update `upstream-lock.json`, run its unit tests, then run the complete rebind
