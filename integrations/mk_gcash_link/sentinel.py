@@ -11,6 +11,13 @@ _BRIDGE_VERSION = "20260219f9f6"
 _BRIDGE_JS = Path(__file__).with_name("sentinel_bridge.js")
 
 
+def _windows_creation_flags() -> int:
+    """Keep the short-lived Node bridge process from opening a console window."""
+    if os.name != "nt":
+        return 0
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
 def _resolve_node_executable() -> str:
     candidates = (os.environ.get("SENTINEL_NODE", "").strip(), "node", "nodejs")
     for candidate in candidates:
@@ -60,6 +67,7 @@ def mint_sentinel_sync(
             capture_output=True,
             timeout=timeout_s,
             check=False,
+            creationflags=_windows_creation_flags(),
         )
     except FileNotFoundError as exc:
         raise RuntimeError("Sentinel 需要 Node.js") from exc
