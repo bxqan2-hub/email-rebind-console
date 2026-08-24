@@ -1,0 +1,10 @@
+{
+  "runtime_projects": [
+    {
+      "name": "MK-GCash-Link-OpenSource",
+      "url": "https://github.com/mika50000/MK-GCash-Link-OpenSource",
+      "commit": "2607d879ce2005ef9a9c6cdfa1ec747c6f26d4d5",
+      "path": "integrations/mk_gcash_link"
+    }
+  ]
+}

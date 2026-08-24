@@ -13,6 +13,7 @@
     <button class="nav" data-view="pool">替换邮箱号池</button>
     <button class="nav" data-view="proxies">换绑代理池</button>
     <button class="nav" data-view="tasks">任务记录</button>
+    <button class="nav" data-view="gcash">GCash提链</button>
     <div class="side-note">与主站仅通过文本格式联动；本分站不读写主站账号文件。</div>
   </aside>
   <main>
@@ -71,6 +72,17 @@
 
     <section class="view hidden" id="view-tasks">
       <article class="card"><div class="card-head"><div><h2>换绑任务记录</h2><p>成功、失败和待核验记录均可单条清理，也可批量清理全部已结束记录；活动任务保持锁定。</p></div><div class="actions"><button class="btn danger" id="clearFinishedTasks">清理全部已结束</button><button class="btn ghost" id="refreshTasks">刷新</button></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>原邮箱 → 新邮箱</th><th>换绑代理</th><th>状态</th><th>当前阶段</th><th>说明</th><th>完成时间</th><th>操作</th></tr></thead><tbody id="taskBody"></tbody></table></div></article>
+    </section>
+
+    <section class="view hidden" id="view-gcash">
+      <article class="card gcash-shell">
+        <div class="card-head responsive">
+          <div><h2>GCash提链</h2><p>已内嵌 MK GCash Link 开源工作台，任务数据仅保存在当前 Python 进程内。</p></div>
+          <div class="actions"><a class="btn ghost" href="{{ gcash_url }}" target="_blank" rel="noopener">新窗口打开</a></div>
+        </div>
+        <div class="gcash-meta">上游版本 <code>{{ gcash_upstream_commit }}</code> · 本地服务 <code>{{ gcash_url }}</code></div>
+        <iframe id="gcashFrame" title="GCash提链工作台" data-src="{{ gcash_url }}" loading="lazy"></iframe>
+      </article>
     </section>
   </main>
   <div id="toast"></div>

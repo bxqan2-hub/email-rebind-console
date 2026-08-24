@@ -2,4 +2,6 @@ Flask>=3.0,<4
 requests>=2.31,<3
 selenium>=4.20,<5
 pyotp>=2.9,<3
-
+curl_cffi==0.15.0
+playwright==1.53.0
+qrcode==8.2

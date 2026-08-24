@@ -8,6 +8,7 @@ from urllib.parse import quote
 from flask import Flask, Response, jsonify, render_template, request
 
 import settings
+import gcash_service
 import roxy_flow
 import store
 import worker
@@ -23,11 +24,21 @@ def create_app(*, recover: bool = True) -> Flask:
 
     @app.get("/")
     def index():
-        return render_template("index.html", port=settings.PORT)
+        return render_template(
+            "index.html",
+            port=settings.PORT,
+            gcash_url=settings.GCASH_URL,
+            gcash_upstream_commit=gcash_service.UPSTREAM_COMMIT,
+        )
 
     @app.get("/health")
     def health():
-        return jsonify({"ok": True, "service": "email-rebind-console", "port": settings.PORT})
+        return jsonify({
+            "ok": True,
+            "service": "email-rebind-console",
+            "port": settings.PORT,
+            "gcash": gcash_service.status(),
+        })
 
     @app.get("/api/state")
     def api_state():
@@ -361,4 +372,5 @@ def _configure_logging() -> None:
 
 if __name__ == "__main__":
     _configure_logging()
+    gcash_service.start()
     create_app().run(host=settings.HOST, port=settings.PORT, threaded=True, use_reloader=False)

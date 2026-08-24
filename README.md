@@ -78,6 +78,23 @@ $env:EMAIL_REBIND_HOST='127.0.0.3'; $env:EMAIL_REBIND_PORT='5092'; & 'C:\Users\A
 
 浏览器打开 <http://127.0.0.3:5092/>。双击 `start.bat` 会先强制停止 5092 端口上的现有分站进程，再启动并打开该地址。
 
+## GCash提链
+
+左侧导航的“GCash提链”内嵌
+[MK GCash Link OpenSource](https://github.com/mika50000/MK-GCash-Link-OpenSource)，
+锁定版本为 `2607d879ce2005ef9a9c6cdfa1ec747c6f26d4d5`。源码保存在
+`integrations/mk_gcash_link`，MIT 许可证和上游说明均随源码保留。
+
+GCash 工作台由分站进程自动启动并仅监听本机 `127.0.0.3:8931`；
+`start.bat` 会同时检查 5092 分站和 8931 GCash 服务，`stop.bat` 会同时停止两者。
+它使用用户在工作台中提供的 AT 与 PH 住宅代理，任务数据只保存在当前 Python
+进程内，重启后清空。依赖安装命令为：
+
+```powershell
+& 'C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe' -m pip install -r requirements.txt
+& 'C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe' -m playwright install chromium
+```
+
 换绑使用 ChatGPT 同源 API 协议：登录原邮箱 → eligibility → begin → 新邮箱验证码 → verify → 退出 → 用新邮箱重新登录并读取 `/api/auth/session` 的新 AT。邮箱换绑过程不打开 Settings，不点击邮箱，不执行 DOM 兜底。
 
 ## HAR 验证的换绑契约

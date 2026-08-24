@@ -11,15 +11,18 @@ class LauncherTests(unittest.TestCase):
         text = raw.decode("ascii")
         self.assertIn('cd /d "%~dp0"', text)
         self.assertIn('set "EMAIL_REBIND_PORT=5092"', text)
+        self.assertIn('set "EMAIL_REBIND_GCASH_PORT=8931"', text)
         self.assertIn('set "EMAIL_REBIND_HOST=127.0.0.3"', text)
         self.assertIn('set "APP_HOST=127.0.0.3"', text)
         self.assertIn('set "APP_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/"', text)
         self.assertIn('set "HEALTH_URL=http://%APP_HOST%:%EMAIL_REBIND_PORT%/health"', text)
+        self.assertIn('set "GCASH_HEALTH_URL=http://%APP_HOST%:%EMAIL_REBIND_GCASH_PORT%/api/health"', text)
         self.assertIn('pythonw.exe', text)
         self.assertIn('call :stop_existing', text)
         self.assertIn('call :healthcheck', text)
         self.assertIn('Invoke-WebRequest', text)
         self.assertIn('Get-NetTCPConnection', text)
+        self.assertIn('$ports=@(%EMAIL_REBIND_PORT%,%EMAIL_REBIND_GCASH_PORT%)', text)
         self.assertIn('Stop-Process -Id', text)
         self.assertIn('Get-CimInstance Win32_Process', text)
         self.assertIn('for /l %%i in (1,1,30)', text)
@@ -31,7 +34,8 @@ class LauncherTests(unittest.TestCase):
 
     def test_stop_bat_targets_the_same_port(self):
         text = Path("stop.bat").read_text(encoding="utf-8")
-        self.assertIn('findstr ":5092"', text)
+        self.assertIn('findstr ":%%r"', text)
+        self.assertIn('5092 8931', text)
         self.assertNotIn(":5091", text)
 
     def test_normal_polling_requests_are_not_logged_to_console(self):
