@@ -18,6 +18,27 @@ def checkout_response():
 
 
 class GCashChainProtocolTests(unittest.TestCase):
+    def test_proxy_preflight_does_not_retry_deterministic_route_failures(self):
+        for error in (
+            "代理预检失败：出口不是 PH（检测到 US）",
+            "代理预检失败：ChatGPT trace 未返回出口 IP",
+            "代理格式无效",
+            "带账号密码的 SOCKS5 不支持完整 GCash 链路",
+        ):
+            retryable, label = gcash_chain._retry_decision({
+                "current_step": "proxy_test",
+                "error_message": error,
+            })
+            self.assertFalse(retryable, error)
+            self.assertEqual("", label)
+
+        retryable, label = gcash_chain._retry_decision({
+            "current_step": "proxy_test",
+            "error_message": "连接超时",
+        })
+        self.assertTrue(retryable)
+        self.assertEqual("代理预检连接失败，重试", label)
+
     def test_browser_aligned_protocol_order_and_headers(self):
         requests = []
         sentinel_calls = []

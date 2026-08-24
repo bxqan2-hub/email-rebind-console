@@ -541,7 +541,18 @@ def _retry_decision(result):
     if "checkout_creation_rate_limited" in err or "too many checkout attempts" in err:
         return False, ""
     if current_step == "proxy_test":
-        return True, "代理预检失败，换节点重试"
+        # A country/IP/format result is deterministic for the supplied route.
+        # Retrying the same per-AT proxy only kept the UI on “验证 PH 代理出口”
+        # and could never change the result. Keep retries for transport errors,
+        # matching the upstream chain's retry boundary without masking bad nodes.
+        if any(marker in err for marker in (
+            "出口不是 ph", "trace 未返回出口 ip", "代理格式无效",
+            "带账号密码的 socks5", "缺少可复核的初始出口 ip",
+        )):
+            return False, ""
+        if _callback_error_is_retryable(err):
+            return True, "代理预检连接失败，重试"
+        return False, ""
     if current_step == "create_checkout" and any(kw in err for kw in (
         "连接失败", "连接超时", "timeout", "timed out", "refused", "proxy",
         "无法连接", "connection", "reset", "eof", "cloudflare",
@@ -1639,6 +1650,7 @@ class GCashSessionManager:
                 task["current_step"] = "init"
                 task["steps"] = copy.deepcopy(retry_steps)
                 task["error_message"] = ""
+                task["attempts_used"] = attempt + 1
             chain = GCashChain(
                 token=task["token"],
                 client_account_id=task["client_account_id"],

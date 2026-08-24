@@ -257,7 +257,10 @@ function progressPercent(account) {
 function progressText(account) {
   if (account.queue_position) return `队列第 ${account.queue_position} 位`;
   const active = [...(account.steps || [])].reverse().find(step => step.state === "active");
-  if (active?.label) return active.label;
+  if (active?.label) {
+    const attempt = Number(account.attempts_used) || 0;
+    return attempt > 1 ? `${active.label} · 第 ${attempt} 次` : active.label;
+  }
   if (account.status === "canceling") return "正在停止任务";
   return account.attempts_used ? `已尝试 ${account.attempts_used} 次` : "准备提链";
 }
