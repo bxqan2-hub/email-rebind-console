@@ -73,6 +73,56 @@ class StandaloneAppTests(unittest.TestCase):
         finally:
             manager.executor.shutdown(wait=True)
 
+    def test_batch_job_uses_requested_concurrency_and_one_proxy_per_at(self):
+        first = jwt({"exp": int(time.time()) + 3600, "email": "one@example.com"})
+        second = jwt({"exp": int(time.time()) + 3600, "email": "two@example.com"})
+        fake_manager = MagicMock()
+        fake_manager.create_session.return_value = "local_0123456789abcdef"
+        with (
+            patch.object(app, "CHAIN_MANAGER", fake_manager),
+            patch.object(app, "public_job", return_value={"job_id": "local_0123456789abcdef"}),
+        ):
+            result = app.create_job({
+                "tokens": f"{first}\n{second}",
+                "proxy_pool": ["proxy-one.example:8001", "proxy-two.example:8002"],
+                "concurrency": 2,
+            })
+
+        self.assertEqual("local_0123456789abcdef", result["job_id"])
+        fake_manager.create_session.assert_called_once_with(max_concurrency=2)
+        payloads = fake_manager.submit_jobs.call_args.args[1]
+        self.assertEqual(2, len(payloads))
+        self.assertEqual(
+            ["proxy-one.example:8001", "proxy-two.example:8002"],
+            [item["proxy"] for item in payloads],
+        )
+        self.assertEqual([[item["proxy"]] for item in payloads], [item["proxy_pool"] for item in payloads])
+
+        with self.assertRaisesRegex(ValueError, "每个 AT 配置一条代理"):
+            app.create_job({
+                "tokens": f"{first}\n{second}",
+                "proxy_pool": ["proxy-one.example:8001"],
+                "concurrency": 2,
+            })
+
+    def test_session_concurrency_limits_parallel_accounts(self):
+        manager = app.GCashSessionManager(
+            max_concurrency=4, max_queue=10, max_session_concurrency=4,
+        )
+        try:
+            with patch.object(manager.executor, "submit", return_value=MagicMock()):
+                session_id = manager.create_session(max_concurrency=2)
+                manager.submit_jobs(session_id, [
+                    {"token": f"token-{index}", "proxy": f"proxy-{index}", "max_attempts": 1}
+                    for index in range(4)
+                ])
+            self.assertEqual(2, manager.active_count)
+            self.assertEqual(2, manager.active_by_session[session_id])
+            self.assertEqual(2, len(manager.pending_tasks))
+            self.assertEqual(2, manager.get_session(session_id)["max_concurrency"])
+        finally:
+            manager.executor.shutdown(wait=True)
+
     def test_fallback_qr_contains_a_valid_png_for_a_gcash_link(self):
         link = (
             "https://m.gcash.com/gcash-login-web/index.html"

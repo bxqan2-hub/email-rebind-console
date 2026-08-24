@@ -216,14 +216,16 @@ h2 { font-size: 21px; line-height: 1.2; }
   border-top: 1px solid var(--line);
   background: var(--surface-soft);
 }
+.proxyOptions > div { display: flex; align-items: center; gap: 8px; }
 .proxyOptions label { color: #555762; font-size: 12px; font-weight: 700; }
-select, input[type="search"] {
+select, input[type="search"], input[type="number"] {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text);
 }
 select { padding: 0 34px 0 11px; cursor: pointer; }
+input[type="number"] { width: 64px; min-height: 38px; padding: 0 8px; }
 
 .headerActions { display: flex; align-items: center; gap: 8px; }
 .accountToolbar {

@@ -88,7 +88,9 @@ $env:EMAIL_REBIND_HOST='127.0.0.3'; $env:EMAIL_REBIND_PORT='5092'; & 'C:\Users\A
 GCash 工作台由分站进程自动启动并仅监听本机 `127.0.0.3:8931`；
 `start.bat` 会同时检查 5092 分站和 8931 GCash 服务，`stop.bat` 会同时停止两者。
 它使用用户在工作台中提供的 AT 与 PH 住宅代理，任务数据只保存在当前 Python
-进程内，重启后清空。依赖安装命令为：
+进程内，重启后清空。完成账号支持多选后点击“推送GCash”，批量 AT 会直接进入提链账号确认页。
+GCash 工作台可设置本批提链并发；多账号任务要求每个 AT 配置一条独立首选代理，后端按所选并发同时执行。
+依赖安装命令为：
 
 ```powershell
 & 'C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe' -m pip install -r requirements.txt

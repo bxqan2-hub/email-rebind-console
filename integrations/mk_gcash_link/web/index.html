@@ -69,14 +69,10 @@
           </div>
           <textarea id="proxyInput" spellcheck="false" autocomplete="off" placeholder="host:port:user:pass&#10;http://user:pass@host:port&#10;socks5://host:port"></textarea>
           <div class="proxyOptions">
-            <label for="maxAttempts">单账号重试</label>
-            <select id="maxAttempts">
-              <option value="1">1 次</option>
-              <option value="3">3 次</option>
-              <option value="5" selected>5 次</option>
-              <option value="7">7 次</option>
-              <option value="10">10 次</option>
-            </select>
+            <div><label for="jobConcurrency">提链并发</label><input id="jobConcurrency" type="number" min="1" max="12" value="4"></div>
+            <div><label for="maxAttempts">单号重试</label><select id="maxAttempts">
+              <option value="1">1 次</option><option value="3">3 次</option><option value="5" selected>5 次</option><option value="7">7 次</option><option value="10">10 次</option>
+            </select></div>
           </div>
         </aside>
       </div>
@@ -169,6 +165,6 @@
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=20260824-openui01" defer></script>
+  <script src="app.js?v=20260824-concurrency01" defer></script>
 </body>
 </html>

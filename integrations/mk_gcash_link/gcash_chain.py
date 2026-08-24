@@ -1397,17 +1397,33 @@ class GCashSessionManager:
             self._dispatch_locked()
             return self._queue_status_locked()
 
-    def create_session(self):
+    def create_session(self, max_concurrency=None):
         """创建新会话"""
         session_id = "local_" + secrets.token_hex(8)
         with self.lock:
             self._cleanup_locked()
+            session_concurrency = (
+                self.max_session_concurrency
+                if max_concurrency is None
+                else max(1, min(int(max_concurrency), self.max_session_concurrency))
+            )
             self.sessions[session_id] = {
                 "tasks": [],
                 "created": time.time(),
                 "done": False,
+                "max_concurrency": session_concurrency,
             }
         return session_id
+
+    def _session_limit_locked(self, session_id):
+        session = self.sessions.get(session_id) or {}
+        return max(
+            1,
+            min(
+                int(session.get("max_concurrency") or self.max_session_concurrency),
+                self.max_session_concurrency,
+            ),
+        )
 
     def submit_jobs(self, session_id, payloads):
         """提交任务到会话（每次尝试固定一个 PH 节点）"""
@@ -1421,7 +1437,7 @@ class GCashSessionManager:
             free_workers = max(0, self.max_concurrency - self.active_count)
             session_free = max(
                 0,
-                self.max_session_concurrency
+                self._session_limit_locked(session_id)
                 - self.active_by_session.get(session_id, 0),
             )
             immediately_runnable = min(free_workers, session_free)
@@ -1476,7 +1492,7 @@ class GCashSessionManager:
                 index
                 for index, (pending_session_id, _) in enumerate(self.pending_tasks)
                 if self.active_by_session.get(pending_session_id, 0)
-                < self.max_session_concurrency
+                < self._session_limit_locked(pending_session_id)
             ), None)
             if eligible_index is None:
                 break
@@ -1706,6 +1722,7 @@ class GCashSessionManager:
             return {
                 "done": session["done"],
                 "tasks": copy.deepcopy(session["tasks"]),
+                "max_concurrency": self._session_limit_locked(session_id),
             }
 
     @staticmethod

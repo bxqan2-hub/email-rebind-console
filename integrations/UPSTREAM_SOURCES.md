@@ -18,6 +18,13 @@ upstream web client also accepts one origin-checked `postMessage` from its paren
 rebind console to populate the AT field after the user clicks “推送AT到GCash提链”;
 the message is not persisted and does not start a payment task automatically.
 
+Additional local extension points are limited to batch handoff and scheduling:
+the same origin-checked message may contain multiple selected AT/email pairs,
+which are parsed into the existing account confirmation step; each submitted AT
+must have one distinct initial proxy. A per-job `concurrency` value is bounded by
+the upstream global/session limits and controls how many accounts from that job
+run at once. The underlying checkout, payment, retry, and monitor chain is unchanged.
+
 Before updating, fetch the source repository, compare it with the vendored tree,
 update `upstream-lock.json`, run its unit tests, then run the complete rebind
 console test suite.

@@ -239,6 +239,17 @@ def create_job(payload):
         raise ValueError("开源版仅支持用户自备代理池")
     accounts, warnings = parse_accounts(payload)
     proxy_pool = parse_proxy_pool(payload.get("proxy_pool", []))
+    if len(proxy_pool) < len(accounts):
+        raise ValueError(
+            f"多账号并发提链要求每个 AT 配置一条代理：当前 {len(accounts)} 个 AT、{len(proxy_pool)} 条代理"
+        )
+    try:
+        concurrency = int(payload.get("concurrency", min(4, len(accounts))))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("concurrency 必须是整数") from exc
+    max_job_concurrency = min(MAX_CONCURRENCY, MAX_SESSION_CONCURRENCY, len(accounts))
+    if not 1 <= concurrency <= max_job_concurrency:
+        raise ValueError(f"concurrency 必须在 1 到 {max_job_concurrency} 之间")
     try:
         max_attempts = int(payload.get("max_attempts", 5))
     except (TypeError, ValueError) as exc:
@@ -247,7 +258,7 @@ def create_job(payload):
         raise ValueError("max_attempts 必须在 1 到 10 之间")
 
     _cleanup_meta()
-    job_id = CHAIN_MANAGER.create_session()
+    job_id = CHAIN_MANAGER.create_session(max_concurrency=concurrency)
     task_payloads = []
     account_meta = {}
     for index, account in enumerate(accounts):
@@ -263,8 +274,8 @@ def create_job(payload):
             "billing_email": account["email"],
             "billing_name": account["name"],
             "client_account_id": client_id,
-            "proxy": proxy_pool[index % len(proxy_pool)],
-            "proxy_pool": proxy_pool,
+            "proxy": proxy_pool[index],
+            "proxy_pool": [proxy_pool[index]],
             "max_attempts": max_attempts,
         })
     try:
@@ -277,6 +288,7 @@ def create_job(payload):
             "created": time.time(),
             "accounts": account_meta,
             "warnings": warnings,
+            "concurrency": concurrency,
         }
     return public_job(job_id)
 
@@ -356,6 +368,7 @@ def public_job(job_id):
         "done": bool(session.get("done")),
         "accounts": items,
         "warnings": list(meta.get("warnings") or []),
+        "concurrency": int(meta.get("concurrency") or 1),
         "queue": CHAIN_MANAGER.queue_status(),
     }
 
@@ -492,7 +505,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({
                     "ok": True,
                     "queue": CHAIN_MANAGER.queue_status(),
-                    "limits": {"max_accounts": MAX_ACCOUNTS},
+                    "limits": {
+                        "max_accounts": MAX_ACCOUNTS,
+                        "max_concurrency": min(MAX_CONCURRENCY, MAX_SESSION_CONCURRENCY),
+                    },
                 })
             match = re.fullmatch(r"/api/jobs/(local_[a-f0-9]{16})", path)
             if match:

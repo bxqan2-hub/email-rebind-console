@@ -7,6 +7,7 @@ const state = {
   stopping: false,
   abandoning: false,
   maxAccounts: 50,
+  maxConcurrency: 4,
   maxProxies: 100,
 };
 
@@ -529,6 +530,12 @@ async function startJob() {
   if (!selectedAccounts.length) return toast("请选择有效账号");
   if (!proxies.length) return toast("请填写 PH 住宅代理池");
   if (proxies.length > state.maxProxies) return toast(`自备代理最多 ${state.maxProxies} 条`);
+  if (proxies.length < selectedAccounts.length) return toast(`每个 AT 需要一条代理：当前 ${selectedAccounts.length} 个 AT、${proxies.length} 条代理`);
+  const concurrency = Math.max(1, Math.min(
+    Number($("jobConcurrency").value) || 1,
+    selectedAccounts.length,
+    state.maxConcurrency,
+  ));
 
   $("startJob").disabled = true;
   try {
@@ -541,6 +548,7 @@ async function startJob() {
           name: account.name,
         })),
         proxy_pool: proxies,
+        concurrency,
         max_attempts: Number($("maxAttempts").value) || 5,
       }),
     });
@@ -597,6 +605,9 @@ async function health() {
   try {
     const result = await api("/api/health");
     state.maxAccounts = Math.max(1, Number(result.limits?.max_accounts) || 50);
+    state.maxConcurrency = Math.max(1, Number(result.limits?.max_concurrency) || 4);
+    $("jobConcurrency").max = String(state.maxConcurrency);
+    $("jobConcurrency").value = String(Math.min(Number($("jobConcurrency").value) || 4, state.maxConcurrency));
     updateQueue(result.queue);
     updateInputCounts();
   } catch {
@@ -609,6 +620,7 @@ async function health() {
 $("tokenInput").oninput = updateInputCounts;
 $("proxyInput").oninput = updateInputCounts;
 $("maxAttempts").onchange = updateFlow;
+$("jobConcurrency").onchange = updateFlow;
 $("importTokenBtn").onclick = parseAccounts;
 $("clearToken").onclick = () => {
   $("tokenInput").value = "";
@@ -657,13 +669,21 @@ window.addEventListener("message", event => {
   if (!REBIND_PARENT_ORIGIN || event.source !== window.parent || event.origin !== REBIND_PARENT_ORIGIN) return;
   const payload = event.data && typeof event.data === "object" ? event.data : {};
   if (payload.type !== "email-rebind:push-at") return;
-  const match = String(payload.accessToken || "").match(JWT_RE);
-  if (!match) return;
-  const email = String(payload.email || "").trim();
-  $("tokenInput").value = email ? `${email}|${match[1]}` : match[1];
-  $("importStatus").textContent = "已从换绑完成账号自动填入 AT";
+  const incoming = Array.isArray(payload.accounts) && payload.accounts.length
+    ? payload.accounts : [{accessToken: payload.accessToken, email: payload.email}];
+  const seen = new Set();
+  const rows = incoming.map(item => {
+    const match = String(item?.accessToken || "").match(JWT_RE);
+    if (!match || seen.has(match[1])) return "";
+    seen.add(match[1]);
+    const email = String(item?.email || "").trim();
+    return email ? `${email}|${match[1]}` : match[1];
+  }).filter(Boolean);
+  if (!rows.length) return;
+  $("tokenInput").value = rows.join("\n");
+  $("importStatus").textContent = `已从换绑完成账号接收 ${rows.length} 个 AT`;
   updateInputCounts();
-  $("tokenInput").focus();
+  parseAccounts();
 });
 document.addEventListener("keydown", event => { if (event.key === "Escape") closeQr(); });
 setInterval(() => {
