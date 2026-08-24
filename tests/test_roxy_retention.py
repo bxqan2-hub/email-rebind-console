@@ -69,18 +69,16 @@ class RoxyRetentionTests(unittest.TestCase):
         )
         return loaded, driver, client_box
 
-    def test_success_keeps_logged_in_window_and_close_button_deletes_profile(self):
+    def test_extension_keeps_logged_in_window_and_close_button_deletes_profile(self):
         events = []
         loaded, _driver, _client_box = self._loaded(events)
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
-                patch.object(roxy_flow, "_complete_login", side_effect=[
-                    {"user": {"email": "old@example.com"}},
-                    {"user": {"email": "new@example.com"}, "accessToken": "at-new"},
-                ]), \
-                patch.object(roxy_flow, "_change_email_har_guided"), \
+                patch.object(roxy_flow, "_complete_login", return_value={
+                    "user": {"email": "new@example.com"}, "accessToken": "at-new",
+                }), \
                 patch.object(roxy_flow, "_clear_login_state"):
-            result = roxy_flow.perform_email_rebind(
-                old_email="old@example.com", new_email="new@example.com",
+            result = roxy_flow.perform_replacement_login(
+                new_email="new@example.com",
                 password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
                 api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
             )
@@ -98,15 +96,15 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertIn("driver.quit", events)
         self.assertNotIn("profile-1", roxy_flow._RETAINED)
 
-    def test_api_failure_quits_driver_and_deletes_temporary_profile_before_retry(self):
+    def test_extension_failure_quits_driver_and_deletes_temporary_profile(self):
         events = []
         loaded, _driver, _client_box = self._loaded(events)
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
-                patch.object(roxy_flow, "_complete_login", return_value={"user": {"email": "old@example.com"}}), \
-                patch.object(roxy_flow, "_change_email_har_guided", side_effect=roxy_flow._HarApiUnavailable("API unavailable")):
-            with self.assertRaisesRegex(roxy_flow._HarApiUnavailable, "API unavailable"):
-                roxy_flow.perform_email_rebind(
-                    old_email="old@example.com", new_email="new@example.com",
+                patch.object(roxy_flow, "_complete_login", side_effect=RuntimeError("login unavailable")), \
+                patch.object(roxy_flow, "_clear_login_state"):
+            with self.assertRaisesRegex(roxy_flow.RebindOutcomeUnknown, "login unavailable"):
+                roxy_flow.perform_replacement_login(
+                    new_email="new@example.com",
                     password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
                     api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
                 )
@@ -124,16 +122,14 @@ class RoxyRetentionTests(unittest.TestCase):
         loaded, _driver, _client_box = self._loaded(events)
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded), \
                 patch.object(roxy_flow, "_complete_login", side_effect=[
-                    {"user": {"email": "old@example.com"}},
                     TimeoutError("替换邮箱验证码已提交但未取得 ChatGPT accessToken"),
                     {"user": {"email": "new@example.com"}, "accessToken": "at-new"},
                 ]) as complete_login, \
                 patch.object(roxy_flow.mail_api, "read_current_otp", return_value=None), \
-                patch.object(roxy_flow, "_change_email_har_guided"), \
                 patch.object(roxy_flow, "_clear_login_state"), \
                 patch.object(roxy_flow.settings, "TRANSIENT_RETRY_DELAY", 0):
-            result = roxy_flow.perform_email_rebind(
-                old_email="old@example.com", new_email="new@example.com",
+            result = roxy_flow.perform_replacement_login(
+                new_email="new@example.com",
                 password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
                 api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
                 max_relogin_retries=1,
@@ -141,7 +137,7 @@ class RoxyRetentionTests(unittest.TestCase):
             )
 
         self.assertEqual(result["access_token"], "at-new")
-        self.assertEqual(complete_login.call_count, 3)
+        self.assertEqual(complete_login.call_count, 2)
         self.assertIn("relogin_new_retry", progress_events)
         self.assertIn("profile-1", roxy_flow._RETAINED)
 

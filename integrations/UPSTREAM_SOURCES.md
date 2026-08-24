@@ -33,12 +33,17 @@ console test suite.
 This is the sole runtime implementation for the core email-rebind protocol:
 password + TOTP login, eligibility, begin, replacement-mail OTP, verify, and
 replacement-email login/AT export. `protocol_flow.py` is the local adapter. It
-uses the vendored primitives without writing login bundles, cookies, access
-tokens, or traces into the source tree. Local namespace-only import changes keep
-the vendored `registration_core` isolated from the main-site Python packages.
+imports and calls the upstream `rebind_core.pipeline.run_rebind_email` entrypoint
+instead of reimplementing its steps. All 27 vendored files, including the two
+upstream `.gitkeep` files, are byte-for-byte identical to the locked commit; the
+combined tree SHA-256 is
+`641344e4ae759cb40456627aeb566a835047ad5e85f33f29b32d1940f7e945de`.
+Upstream runtime bundles, cookies, access tokens, and traces remain under its
+ignored `outputs/` paths and are not committed.
 
 Roxy is not part of the core rebind path. When the user enables **完成后开
 Roxy**, `worker.py` first finishes the protocol transaction, then selects a
 second proxy and calls the existing Roxy replacement-email login extension.
 Failure of that optional extension does not repeat or roll back an already
-confirmed email change.
+confirmed email change. The previous Roxy/HAR email-change entrypoint and its
+email-change helpers are removed; Roxy contains only this post-success extension.

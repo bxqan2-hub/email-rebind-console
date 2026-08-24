@@ -18,7 +18,7 @@ _ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-r
 
 
 _TRANSIENT_STAGES = {
-    "queued", "running", "protocol_login_old", "protocol_reauth", "check_proxy", "login_old", "login_password", "login_totp",
+    "queued", "running", "protocol_login_old", "protocol_upstream", "protocol_reauth", "check_proxy", "login_old", "login_password", "login_totp",
     "login_email_otp", "submit_login_email_otp", "check_email_eligibility",
     "submit_new_email",
 }
@@ -259,7 +259,7 @@ def _run(task_id: int) -> None:
                     stop_check=stop_check,
                 )
             else:
-                result = protocol_flow.perform_email_rebind(
+                result = protocol_flow.run_upstream_rebind(
                     old_email=str(account.get("old_email") or ""),
                     new_email=str(replacement.get("email") or ""),
                     password=str(account.get("password") or ""),

@@ -65,7 +65,7 @@ class ProxyPoolTests(unittest.TestCase):
                     patch.object(store, "_PROXIES", root / "proxies.json"), \
                     patch.object(store, "_PROXY_RANDOM", fake_random), \
                     patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=perform):
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", side_effect=perform):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 store.import_proxies("http://first.example:8000\nhttp://second.example:8000")
@@ -93,7 +93,7 @@ class ProxyPoolTests(unittest.TestCase):
                     patch.object(store, "_TASKS", root / "tasks.json"), \
                     patch.object(store, "_PROXIES", root / "proxies.json"), \
                     patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=roxy_flow.ProxyFailure("代理超时")):
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", side_effect=roxy_flow.ProxyFailure("代理超时")):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 store.import_proxies("http://only.example:8000")
@@ -130,8 +130,8 @@ class ProxyPoolTests(unittest.TestCase):
 
         with patch.object(roxy_flow, "_load_main_roxy", return_value=(FakeClient, None, None, None, None, None, None)):
             with self.assertRaises(roxy_flow.ProxyFailure):
-                roxy_flow.perform_email_rebind(
-                    old_email="old@example.com", new_email="new@example.com",
+                roxy_flow.perform_replacement_login(
+                    new_email="new@example.com",
                     password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
                     api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
                 )
@@ -171,8 +171,8 @@ class ProxyPoolTests(unittest.TestCase):
         loaded = (FakeClient, lambda _opened: FakeDriver(), lambda _driver: None, None, None, None, lambda *_a, **_k: {})
         with patch.object(roxy_flow, "_load_main_roxy", return_value=loaded):
             with self.assertRaises(roxy_flow.ProxyFailure):
-                roxy_flow.perform_email_rebind(
-                    old_email="old@example.com", new_email="new@example.com",
+                roxy_flow.perform_replacement_login(
+                    new_email="new@example.com",
                     password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
                     api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
                 )

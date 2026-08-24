@@ -11,9 +11,9 @@ from .paths import ensure_icloud_on_path
 
 ensure_icloud_on_path()
 
-from integrations.chatgpt_rebind_standalone.registration_core.auth_flow import AuthFlow, AuthResult  # noqa: E402
-from integrations.chatgpt_rebind_standalone.registration_core.config import Config  # noqa: E402
-from integrations.chatgpt_rebind_standalone.registration_core.mfa_totp_protocol import totp_code_candidates  # noqa: E402
+from registration_core.auth_flow import AuthFlow, AuthResult  # noqa: E402
+from registration_core.config import Config  # noqa: E402
+from registration_core.mfa_totp_protocol import totp_code_candidates  # noqa: E402
 
 FACTOR_URL_RE = re.compile(r"/mfa-challenge/([0-9a-fA-F]{16,64})")
 

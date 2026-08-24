@@ -181,7 +181,7 @@ def password_reauth(login: LoginSession) -> dict[str, Any]:
         pass
     pwd_resp = auth.login_password_verify(login.password)
     from .mfa_login import extract_factor_id, issue_mfa_challenge, verify_mfa_totp
-    from integrations.chatgpt_rebind_standalone.registration_core.mfa_totp_protocol import totp_code_candidates
+    from registration_core.mfa_totp_protocol import totp_code_candidates
 
     factor_id = extract_factor_id(
         auth._extract_continue_url_from_step(pwd_resp),

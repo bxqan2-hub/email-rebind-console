@@ -32,7 +32,7 @@ class WorkerRotationTests(unittest.TestCase):
                     patch.object(worker.settings, "MAX_TRANSIENT_RETRIES", 1), \
                     patch.object(worker.settings, "TRANSIENT_RETRY_DELAY", 0), \
                     patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=perform) as run:
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", side_effect=perform) as run:
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 store.import_proxies("http://first.example:8080\nhttp://second.example:8080")
@@ -74,7 +74,7 @@ class WorkerRotationTests(unittest.TestCase):
                     patch.object(worker.settings, "MAX_TRANSIENT_RETRIES", 1), \
                     patch.object(worker.settings, "TRANSIENT_RETRY_DELAY", 0), \
                     patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=perform) as run:
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", side_effect=perform) as run:
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 store.import_proxies(
@@ -94,7 +94,7 @@ class WorkerRotationTests(unittest.TestCase):
                 self.assertEqual(tasks[1]["retry_of_task_id"], tasks[0]["id"])
                 self.assertEqual(tasks[1]["stage"], "protocol_verified")
 
-    def test_api_unavailable_retries_as_a_new_attempt(self):
+    def test_upstream_temporary_failure_retries_as_a_new_attempt(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             fake_random = Mock()
@@ -105,7 +105,7 @@ class WorkerRotationTests(unittest.TestCase):
                 seen.append(kwargs["proxy_url"])
                 if len(seen) == 1:
                     kwargs["progress"]("check_email_eligibility", "检查当前账号的邮箱换绑资格")
-                    raise roxy_flow._HarApiUnavailable("换绑资格接口不可用")
+                    raise RuntimeError("上游换绑资格接口临时不可用")
                 return {"email": kwargs["new_email"], "access_token": "at-new"}
 
             with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
@@ -116,7 +116,7 @@ class WorkerRotationTests(unittest.TestCase):
                     patch.object(worker.settings, "MAX_TRANSIENT_RETRIES", 1), \
                     patch.object(worker.settings, "TRANSIENT_RETRY_DELAY", 0), \
                     patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=perform) as run:
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", side_effect=perform) as run:
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 store.import_proxies("http://first.example:8080\nhttp://second.example:8080")
@@ -141,7 +141,7 @@ class WorkerRotationTests(unittest.TestCase):
                     patch.object(store, "_PROXY_RANDOM", fake_random), \
                     patch.object(worker.settings, "MAX_TRANSIENT_RETRIES", 1), \
                     patch.object(worker.settings, "TRANSIENT_RETRY_DELAY", 0), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=TimeoutError("账号登录超时")) as run:
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", side_effect=TimeoutError("账号登录超时")) as run:
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
                 store.import_proxies("http://first.example:8080\nhttp://second.example:8080")
@@ -164,7 +164,7 @@ class WorkerRotationTests(unittest.TestCase):
             )
             with storage[0], storage[1], storage[2], storage[3], patch.object(worker.settings, "MAX_REPLACEMENT_ATTEMPTS", 5), patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), patch.object(
                 worker.protocol_flow,
-                "perform_email_rebind",
+                "run_upstream_rebind",
                 side_effect=[
                     roxy_flow.ReplacementEmailFailure("otp_unavailable", "bad@example.com 收不到验证码"),
                     {"email": "good@example.com", "access_token": "at-new"},
@@ -202,7 +202,7 @@ class WorkerRotationTests(unittest.TestCase):
                     patch.object(store, "_TASKS", root / "tasks.json"), \
                     patch.object(store, "_PROXIES", root / "proxies.json"), \
                     patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", return_value={
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", return_value={
                         "email": "new@example.com", "access_token": "at-new",
                     }) as perform:
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
@@ -225,7 +225,7 @@ class WorkerRotationTests(unittest.TestCase):
                 patch.object(store, "_PROXIES", root / "proxies.json"),
             )
             with storage[0], storage[1], storage[2], storage[3], \
-                    patch.object(worker.protocol_flow, "perform_email_rebind") as perform:
+                    patch.object(worker.protocol_flow, "run_upstream_rebind") as perform:
                 store.import_source_accounts("old@example.com----https://mail.example/old")
                 store.import_replacement_emails("new@example.com----https://mail.example/new")
                 task = store.reserve_batch()[0]
@@ -267,7 +267,7 @@ class WorkerRotationTests(unittest.TestCase):
             root = Path(tmp)
             with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"), patch.object(
                 worker.protocol_flow,
-                "perform_email_rebind",
+                "run_upstream_rebind",
                 side_effect=roxy_flow.ReplacementEmailFailure("otp_unavailable", "没有验证码"),
             ):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
@@ -285,7 +285,7 @@ class WorkerRotationTests(unittest.TestCase):
             root = Path(tmp)
             with patch.object(store, "_ACCOUNTS", root / "accounts.json"), patch.object(store, "_REPLACEMENTS", root / "replacements.json"), patch.object(store, "_TASKS", root / "tasks.json"), patch.object(store, "_PROXIES", root / "proxies.json"), patch.object(
                 worker.protocol_flow,
-                "perform_email_rebind",
+                "run_upstream_rebind",
                 side_effect=roxy_flow.RebindOutcomeUnknown("maybe@example.com", "验证码已提交但 AT 刷新失败"),
             ):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")

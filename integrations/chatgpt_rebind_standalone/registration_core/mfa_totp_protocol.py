@@ -36,11 +36,11 @@ from typing import Any, Callable
 from urllib.parse import quote
 
 try:
-    from integrations.chatgpt_rebind_standalone.registration_core.http_client import create_http_session
+    from registration_core.http_client import create_http_session
 except Exception:  # pragma: no cover
     create_http_session = None  # type: ignore
 try:
-    from integrations.chatgpt_rebind_standalone.registration_core.traffic_meter import MeteredSession
+    from registration_core.traffic_meter import MeteredSession
 except Exception:  # pragma: no cover
     MeteredSession = None  # type: ignore
 

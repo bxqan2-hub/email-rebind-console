@@ -99,23 +99,21 @@ GCash 工作台由分站进程自动启动并仅监听本机 `127.0.0.3:8931`；
 锁定提交 `e27b3217dbfddab19e83dc57ab225173877e4663`，源码位于
 `integrations/chatgpt_rebind_standalone`。流程为：纯协议登录原邮箱（密码 + TOTP）→
 eligibility → begin → 新邮箱验证码 → verify → 纯协议使用新邮箱重登并获取 AT。
-默认全程不创建 Roxy，也不执行 Settings/DOM 流程。
+分站直接调用上游原生 `rebind_core.pipeline.run_rebind_email`；上游目录的 27 个文件与
+锁定提交逐字节一致，不保留分站自有换绑实现。默认全程不创建 Roxy，也不执行 Settings/DOM 流程。
 
 > 该上游锁定版本只实现密码 + TOTP 登录，因此纯协议核心只接受带 OpenAI 密码和
 > 2FA Secret 的原账号。原邮箱 API-only 记录仍可保留/导入，但启动纯协议任务时会明确失败。
 
-## HAR 验证的换绑契约
+## 上游对齐方式
 
-2026-08-23 的完整成功抓包验证了下面的服务端时序：登录邮箱验证码
-`POST /api/accounts/email-otp/validate` →
-`GET /backend-api/accounts/change_email/eligibility` →
-`POST /backend-api/accounts/change_email/begin` →
-`POST /backend-api/accounts/change_email/verify` → `GET /auth/logout`。
-其中 `verify` 的 `200`/`success=true` 是服务端已经换绑的提交点；`/auth/logout` 是网页成功回调触发的后续退出动作，不能再只等待 `/auth/login`。
-
-同版本前端资源确认 `begin` 使用 `{email}`，`verify` 使用 `{email, code}`；
-`social_password` 类型的两个请求还带 `remove_social_subs=true`。实现只在当前 Roxy 登录页面内执行这些同源请求；接口不可用时直接结束本轮，由工作线程关闭并删除窗口后重新创建环境、重新登录并再次走 API 协议，不切换到 Settings/DOM 流程。
-抓包原文件、Cookie、验证码、邮箱、AT 和请求头值均不写入仓库或日志。
+- `integrations/chatgpt_rebind_standalone` 是锁定提交的完整原样副本，包含上游两个
+  `outputs/**/.gitkeep`，不含本地命名空间补丁。
+- `protocol_flow.py` 只负责调用上游 `run_rebind_email`、读取其 `login_bundle` 并把结果接入分站状态机；
+  登录、MFA、eligibility、begin、收码、verify、重登和导出均由上游实现。
+- 原 Roxy/HAR 换绑入口及对应辅助实现已经删除；`roxy_flow.py` 只保留换绑成功后的新邮箱登录扩展、
+  窗口保留、CDP 端口、刷新 AT 和关闭环境功能。
+- 上游生成的 bundle、Cookie、AT 和 trace 位于其已忽略的 `outputs/`，不会加入 Git。
 
 ## 可选 Roxy 扩展与 AT 刷新
 
@@ -149,7 +147,7 @@ eligibility → begin → 新邮箱验证码 → verify → 纯协议使用新�
 | 失败位置 | 替换邮箱 | 原账号 | 后续动作 |
 | --- | --- | --- | --- |
 | API 无新验证码、取码超时、新邮箱已占用 | 标记 `failed`，保存原因和失败次数 | 保持原身份 | 原子占用下一个可用邮箱并自动重试 |
-| Roxy、原账号登录、账号资格在换绑完成前失败 | 释放回 `available` | 标记失败并保存原因 | 人工重试原账号，不浪费邮箱 |
+| 上游纯协议登录、账号资格在换绑完成前失败 | 释放回 `available` | 标记失败并保存原因 | 人工重试原账号，不浪费邮箱 |
 | 验证码已提交但结果未知，或已换绑后新邮箱登录/AT 刷新失败 | 标记 `review` | 记录可能的新邮箱并标记 `review` | 冻结双方，避免再次换绑造成身份错位 |
 | 换绑和新 AT 校验成功 | 标记 `used` | 标记成功 | 按原邮箱类型进入对应格式导出 |
 | 号池耗尽或达到自动轮换上限 | 保留全部失败标记 | 标记失败并写明原因 | 补充号池后重新选择账号运行 |

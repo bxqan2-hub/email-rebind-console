@@ -10,7 +10,9 @@
       "name": "chatgpt-rebind-standalone",
       "url": "https://github.com/MervLis/chatgpt-rebind-standalone",
       "commit": "e27b3217dbfddab19e83dc57ab225173877e4663",
-      "path": "integrations/chatgpt_rebind_standalone"
+      "path": "integrations/chatgpt_rebind_standalone",
+      "entrypoint": "rebind_core.pipeline.run_rebind_email",
+      "tree_sha256": "641344e4ae759cb40456627aeb566a835047ad5e85f33f29b32d1940f7e945de"
     }
   ]
 }

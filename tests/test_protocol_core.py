@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import app
@@ -13,41 +13,51 @@ import worker
 
 
 class ProtocolFlowTests(unittest.TestCase):
-    def test_vendored_protocol_runs_login_begin_verify_and_relogin_without_roxy(self):
-        login_old = SimpleNamespace()
-        login_new = SimpleNamespace()
-        client = Mock()
-        client.eligibility.return_value = {"eligible": True, "eligibility_type": "password"}
-        progress = []
-        with patch.object(protocol_flow, "_login", side_effect=[login_old, login_new]) as login, \
-                patch.object(protocol_flow, "ChangeEmailClient", return_value=client), \
-                patch.object(protocol_flow, "wait_code", return_value="123456") as wait, \
-                patch.object(protocol_flow, "build_login_bundle", return_value={
-                    "email": "new@example.com", "access_token": "at-new",
-                    "auth_session": {"user": {"email": "new@example.com"}},
-                }):
-            result = protocol_flow.perform_email_rebind(
-                old_email="old@example.com", new_email="new@example.com",
-                password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
-                api_url="https://mail.example/code",
-                proxy_url="http://proxy.example:8080",
-                progress=lambda stage, _message: progress.append(stage),
-            )
+    def test_original_roxy_rebind_core_is_deleted(self):
+        self.assertFalse(hasattr(worker.roxy_flow, "perform_email_rebind"))
+        self.assertFalse(hasattr(worker.roxy_flow, "_change_email_har_guided"))
+        self.assertFalse(hasattr(worker.roxy_flow, "_change_email_via_har_api"))
+        self.assertEqual(protocol_flow.run_rebind_email.__module__, "rebind_core.pipeline")
 
-        self.assertEqual(login.call_count, 2)
-        client.eligibility.assert_called_once_with()
-        client.begin.assert_called_once_with("new@example.com")
-        client.verify.assert_called_once_with("new@example.com", "123456")
-        self.assertEqual(wait.call_args.kwargs["poll_interval"], protocol_flow.settings.OTP_POLL_INTERVAL)
+    def test_adapter_calls_upstream_run_rebind_email_without_reimplementing_steps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle_path = Path(tmp) / "login_bundle.json"
+            bundle_path.write_text(json.dumps({
+                "email": "new@example.com", "access_token": "at-new",
+                "auth_session": {"user": {"email": "new@example.com"}},
+            }), encoding="utf-8")
+            upstream_result = protocol_flow.RebindResult(
+                ok=True, old_email="old@example.com", new_email="new@example.com",
+                session_email="new@example.com", bundle_path=str(bundle_path),
+            )
+            progress = []
+            with patch.object(protocol_flow, "run_rebind_email", return_value=upstream_result) as run:
+                result = protocol_flow.run_upstream_rebind(
+                    old_email="old@example.com", new_email="new@example.com",
+                    password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                    api_url="https://mail.example/code",
+                    proxy_url="http://proxy.example:8080",
+                    progress=lambda stage, _message: progress.append(stage),
+                )
+
+        run.assert_called_once_with(
+            old_email="old@example.com", password="Password!",
+            totp_secret="JBSWY3DPEHPK3PXP", new_email="new@example.com",
+            mail_api="https://mail.example/code", proxy="http://proxy.example:8080",
+            mail_timeout=float(protocol_flow.settings.OTP_MAX_WAIT),
+        )
         self.assertEqual(result["access_token"], "at-new")
         self.assertEqual(result["roxy_browser_status"], "not_opened")
-        self.assertEqual(result["protocol_engine"], "chatgpt-rebind-standalone")
-        self.assertIn("protocol_login_old", progress)
-        self.assertIn("protocol_verified", progress)
+        self.assertEqual(result["protocol_engine"], "chatgpt-rebind-standalone/run_rebind_email")
+        self.assertEqual(progress, ["protocol_upstream", "protocol_verified"])
 
-    def test_protocol_requires_password_and_totp(self):
-        with self.assertRaisesRegex(RuntimeError, "密码和 2FA"):
-            protocol_flow.perform_email_rebind(
+    def test_upstream_failure_is_forwarded_with_original_code(self):
+        failure = protocol_flow.RebindResult(
+            ok=False, code="LOGIN_FAILED", message="email/password/totp_secret 不能为空",
+        )
+        with patch.object(protocol_flow, "run_rebind_email", return_value=failure), \
+                self.assertRaisesRegex(RuntimeError, "LOGIN_FAILED"):
+            protocol_flow.run_upstream_rebind(
                 old_email="old@example.com", new_email="new@example.com",
                 password="", totp_secret="", api_url="https://mail.example/code",
                 proxy_url="http://proxy.example:8080",
@@ -57,10 +67,33 @@ class ProtocolFlowTests(unittest.TestCase):
         lock = json.loads(Path("integrations/upstream-lock.json").read_text(encoding="utf-8"))
         source = next(item for item in lock["runtime_projects"] if item["name"] == "chatgpt-rebind-standalone")
         self.assertEqual(source["commit"], protocol_flow.UPSTREAM_COMMIT)
+        self.assertEqual(source["entrypoint"], "rebind_core.pipeline.run_rebind_email")
         root = Path(source["path"])
         self.assertTrue((root / "rebind_core" / "pipeline.py").is_file())
         self.assertTrue((root / "registration_core" / "auth_flow.py").is_file())
         self.assertTrue((root / "README.md").is_file())
+
+        files = []
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root).as_posix()
+            if "__pycache__" in relative or relative.endswith(".pyc"):
+                continue
+            if relative.startswith("outputs/") and not relative.endswith("/.gitkeep"):
+                continue
+            files.append((relative, path))
+        digest = hashlib.sha256()
+        for relative, path in sorted(files):
+            digest.update(relative.encode())
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        self.assertEqual(len(files), 27)
+        self.assertEqual(
+            digest.hexdigest(),
+            source["tree_sha256"],
+        )
 
 
 class ProtocolWorkerTests(unittest.TestCase):
@@ -80,7 +113,7 @@ class ProtocolWorkerTests(unittest.TestCase):
             fake_random.choice.side_effect = lambda rows: rows[0]
             with patches[0], patches[1], patches[2], patches[3], \
                     patch.object(store, "_PROXY_RANDOM", fake_random), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", return_value={
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", return_value={
                         "email": "new@example.com", "access_token": "at-new",
                         "protocol_engine": "chatgpt-rebind-standalone",
                         "protocol_upstream_commit": protocol_flow.UPSTREAM_COMMIT,
@@ -128,7 +161,7 @@ class ProtocolWorkerTests(unittest.TestCase):
 
             with patches[0], patches[1], patches[2], patches[3], \
                     patch.object(store, "_PROXY_RANDOM", fake_random), \
-                    patch.object(worker.protocol_flow, "perform_email_rebind", side_effect=protocol), \
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", side_effect=protocol), \
                     patch.object(worker.roxy_flow, "perform_replacement_login", side_effect=open_roxy):
                 store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
                 store.import_replacement_emails("new@example.com----https://mail.example/code")
