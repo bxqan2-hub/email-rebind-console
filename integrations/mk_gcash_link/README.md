@@ -62,9 +62,10 @@ host:port:user:pass
 http://user:pass@host:port
 https://user:pass@host:port
 socks5://host:port
+socks5://user:pass@host:port
 ```
 
-Playwright 不支持带账号密码的 SOCKS5，因此完整链路会直接拒绝该格式。
+Chromium 不接受带账号密码的 SOCKS5；完整链路会自动通过本机回环 HTTP CONNECT 桥接到认证 SOCKS5，HTTP API、Sentinel 和浏览器监控共用同一上游出口。
 
 ## API
 

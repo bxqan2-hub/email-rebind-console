@@ -23,7 +23,7 @@ class GCashChainProtocolTests(unittest.TestCase):
             "代理预检失败：出口不是 PH（检测到 US）",
             "代理预检失败：ChatGPT trace 未返回出口 IP",
             "代理格式无效",
-            "带账号密码的 SOCKS5 不支持完整 GCash 链路",
+            "认证 SOCKS5 代理格式无效",
         ):
             retryable, label = gcash_chain._retry_decision({
                 "current_step": "proxy_test",

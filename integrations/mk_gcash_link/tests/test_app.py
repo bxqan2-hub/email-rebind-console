@@ -3,6 +3,7 @@ import json
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 from unittest.mock import MagicMock, patch
@@ -57,10 +58,10 @@ class StandaloneAppTests(unittest.TestCase):
             "proxy.example:8080",
             "http://user:pass@proxy.example:8081",
             "socks5://proxy.example:1080",
+            "socks5://user:pass@proxy.example:1082",
         ])
-        self.assertEqual(3, len(pool))
-        with self.assertRaisesRegex(ValueError, "SOCKS5"):
-            app.parse_proxy_pool(["socks5://user:pass@proxy.example:1080"])
+        self.assertEqual(4, len(pool))
+        self.assertEqual("socks5://user:pass@proxy.example:1082", pool[-1])
         with self.assertRaisesRegex(ValueError, "自备代理池"):
             app.create_job({"proxy_mode": "platform"})
 
@@ -72,6 +73,15 @@ class StandaloneAppTests(unittest.TestCase):
             self.assertEqual("", manager._rotate_proxy("proxy-1", []))
         finally:
             manager.executor.shutdown(wait=True)
+
+    def test_authenticated_socks5_uses_loopback_browser_bridge(self):
+        import payment_monitor
+        with patch("socks_bridge.get_bridge", return_value=SimpleNamespace(url="http://127.0.0.1:45678")) as bridge:
+            config = payment_monitor._playwright_proxy(
+                "socks5://user:pass@proxy.example:1082"
+            )
+        self.assertEqual({"server": "http://127.0.0.1:45678"}, config)
+        bridge.assert_called_once_with("proxy.example", 1082, "user", "pass")
 
     def test_batch_job_uses_requested_concurrency_and_one_proxy_per_at(self):
         first = jwt({"exp": int(time.time()) + 3600, "email": "one@example.com"})

@@ -24,6 +24,10 @@ which are parsed into the existing account confirmation step; each submitted AT
 must have one distinct initial proxy. A per-job `concurrency` value is bounded by
 the upstream global/session limits and controls how many accounts from that job
 run at once. The underlying checkout, payment, retry, and monitor chain is unchanged.
+Authenticated SOCKS5 is a local compatibility extension: Chromium receives a
+loopback HTTP CONNECT endpoint while the API/Sentinel path connects to the same
+SOCKS5 host with its credentials. The bridge is memory-only, loopback-bound, and
+never writes proxy credentials to logs or task payloads.
 
 Before updating, fetch the source repository, compare it with the vendored tree,
 update `upstream-lock.json`, run its unit tests, then run the complete rebind

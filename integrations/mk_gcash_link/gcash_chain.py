@@ -110,14 +110,11 @@ def _parse_proxy(proxy):
 
 
 def _ensure_full_chain_proxy_supported(proxy):
-    """Reject proxy modes that the Chromium monitoring stage cannot use."""
-    proxy_type, _, _, username, password = _parse_proxy(proxy)
+    """Validate proxy syntax; authenticated SOCKS5 uses the local browser bridge."""
+    proxy_type, host, port, username, password = _parse_proxy(proxy)
     if proxy_type == "socks5" and (username is not None or password is not None):
-        raise RuntimeError(
-            "带账号密码的 SOCKS5 不支持完整 GCash 链路；请改用 "
-            "host:port:user:pass（HTTP）、http://user:pass@host:port，"
-            "或无认证 socks5://host:port"
-        )
+        if not host or not port or not username or password is None:
+            raise RuntimeError("认证 SOCKS5 代理格式无效")
 
 
 def _proxy_url(proxy):

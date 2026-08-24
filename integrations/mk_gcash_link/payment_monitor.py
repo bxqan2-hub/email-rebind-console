@@ -409,10 +409,12 @@ def _playwright_proxy(proxy):
     if not host or not port:
         raise RuntimeError("回调监控节点格式无效")
     if proxy_type == "socks5" and (username is not None or password is not None):
-        raise RuntimeError(
-            "带账号密码的 SOCKS5 不支持 GCash 二维码与回调监控；"
-            "请改用认证 HTTP 代理或无认证 SOCKS5"
-        )
+        # Chromium rejects SOCKS5 username/password authentication. Route the
+        # browser context through a loopback HTTP CONNECT bridge instead; the
+        # HTTP API/Sentinel stages continue to use the authenticated SOCKS5 URL.
+        from socks_bridge import get_bridge
+        bridge = get_bridge(host, port, username, password)
+        return {"server": bridge.url}
     scheme = proxy_type if proxy_type in {"http", "https", "socks5"} else "http"
     rendered_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     config = {"server": f"{scheme}://{rendered_host}:{port}"}
