@@ -39,6 +39,54 @@ class GCashChainProtocolTests(unittest.TestCase):
         self.assertTrue(retryable)
         self.assertEqual("代理预检连接失败，重试", label)
 
+    def test_single_proxy_preflight_failure_finishes_without_repeating_route(self):
+        manager = gcash_chain.GCashSessionManager(max_concurrency=1, max_queue=2)
+        calls = []
+
+        class FakeChain:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self):
+                calls.append(1)
+                return {
+                    "status": "failed",
+                    "current_step": "proxy_test",
+                    "steps": [{"key": "proxy_test", "label": "验证 PH 代理出口", "state": "error"}],
+                    "error_message": "代理连接失败：CONNECT 被代理端中止",
+                    "gcash_url": "",
+                    "qr_expires_at": None,
+                    "monitor_id": "",
+                    "callback_status": "unavailable",
+                    "payment_route": "",
+                }
+
+        task = {
+            "token": "fixture-token",
+            "client_account_id": "acct_fixture",
+            "account_id": "",
+            "billing_email": "",
+            "billing_name": "",
+            "proxy": "proxy.example:3000:user:pass",
+            "proxy_pool": ["proxy.example:3000:user:pass"],
+            "max_attempts": 5,
+            "status": "running",
+            "current_step": "init",
+            "steps": [],
+            "error_message": "",
+            "attempts_used": 0,
+            "attempt_history": [],
+            "cancel_requested": False,
+        }
+        with patch.object(gcash_chain, "GCashChain", FakeChain):
+            try:
+                manager._process_task(task)
+            finally:
+                manager.executor.shutdown(wait=True)
+        self.assertEqual(1, len(calls))
+        self.assertEqual(1, task["attempts_used"])
+        self.assertEqual("failed", task["status"])
+
     def test_browser_aligned_protocol_order_and_headers(self):
         requests = []
         sentinel_calls = []

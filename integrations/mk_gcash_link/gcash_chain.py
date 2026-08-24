@@ -253,7 +253,10 @@ def _request(method, url, headers, data=None, timeout=HTTP_TIMEOUT, proxy=None, 
         raise
     except Exception as e:
         message = re.sub(r"(?i)(https?://)[^/@\s]+@", r"\1<credentials>@", str(e))
-        if "timeout" in message.lower() or "timed out" in message.lower():
+        lowered = message.lower()
+        if "proxy connect aborted" in lowered or "proxy connect" in lowered and "aborted" in lowered:
+            raise RuntimeError("代理连接失败：CONNECT 被代理端中止")
+        if "timeout" in lowered or "timed out" in lowered:
             raise RuntimeError("连接超时")
         raise RuntimeError(f"连接失败：{message[:200]}")
     finally:
@@ -1689,7 +1692,12 @@ class GCashSessionManager:
             if not retryable or attempt >= max_attempts - 1:
                 return
 
-            proxy = self._rotate_proxy(proxy, task.get("proxy_pool")) or proxy
+            next_proxy = self._rotate_proxy(proxy, task.get("proxy_pool"))
+            # Each AT is assigned one initial proxy by the console. A proxy-test
+            # failure must not re-run the same route until the UI looks stuck.
+            if result.get("current_step") == "proxy_test" and not next_proxy:
+                return
+            proxy = next_proxy or proxy
             retry_steps.append({
                 "key": f"retry_{attempt + 1}",
                 "label": f"{retry_label} #{attempt + 1}",
