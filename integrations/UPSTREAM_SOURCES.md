@@ -48,10 +48,13 @@ This is the sole runtime implementation for the core email-rebind protocol:
 password + TOTP login, eligibility, begin, replacement-mail OTP, verify, and
 replacement-email login/AT export. `protocol_flow.py` is the local adapter. It
 imports and calls the upstream `rebind_core.pipeline.run_rebind_email` entrypoint
-instead of reimplementing its steps. All 27 vendored files, including the two
-upstream `.gitkeep` files, are byte-for-byte identical to the locked commit; the
-combined tree SHA-256 is
-`641344e4ae759cb40456627aeb566a835047ad5e85f33f29b32d1940f7e945de`.
+instead of reimplementing its steps. The 27-file vendored tree is locked to the
+commit above, with one local bug fix in `rebind_core/mail_inbox.py`: HTML
+mailbox responses are ordered newest-first, so the adapter now selects the
+first explicit OTP card (and avoids CSS/URL numbers) instead of the final
+six-digit match, which was an older message's code. The adapted combined tree
+SHA-256 is
+`74a3315a570adfbb92a82da128d5f69b12ea28acfcf2fb4cf23dd2cdb2a847e2`.
 Upstream runtime bundles, cookies, access tokens, and traces remain under its
 ignored `outputs/` paths and are not committed.
 

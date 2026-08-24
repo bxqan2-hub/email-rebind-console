@@ -12,7 +12,10 @@
       "commit": "e27b3217dbfddab19e83dc57ab225173877e4663",
       "path": "integrations/chatgpt_rebind_standalone",
       "entrypoint": "rebind_core.pipeline.run_rebind_email",
-      "tree_sha256": "641344e4ae759cb40456627aeb566a835047ad5e85f33f29b32d1940f7e945de"
+      "tree_sha256": "74a3315a570adfbb92a82da128d5f69b12ea28acfcf2fb4cf23dd2cdb2a847e2",
+      "local_adaptations": [
+        "rebind_core/mail_inbox.py: prefer newest explicit HTML OTP card instead of the final six-digit match"
+      ]
     }
   ]
 }

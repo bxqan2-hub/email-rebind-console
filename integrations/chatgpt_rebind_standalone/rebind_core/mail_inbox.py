@@ -9,6 +9,16 @@ from urllib.parse import urlparse
 import requests
 
 OTP_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
+HTML_CODE_RE = re.compile(
+    r"<[^>]*class=[\"'][^\"']*\bcode\b[^\"']*[\"'][^>]*>\s*"
+    r"(\d{6})\s*</[^>]+>",
+    re.IGNORECASE | re.DOTALL,
+)
+HTML_SUBJECT_RE = re.compile(
+    r"(?:openai|chatgpt)[^<]{0,120}?(?:login\s+code|verification\s+code|code)"
+    r"\s*(?:is|:)?\s*(\d{6})",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _parse_time(value: Any) -> float | None:
@@ -53,8 +63,24 @@ def _extract_candidates(payload: Any) -> list[dict[str, Any]]:
 
 
 def extract_otp_from_text(text: str) -> str:
-    matches = OTP_RE.findall(text or "")
-    return matches[-1] if matches else ""
+    """Extract the newest visible OTP without selecting CSS/URL numbers.
+
+    Mailbox endpoints commonly return an HTML list ordered newest-first.  The
+    old implementation selected the final six-digit match, which picked the
+    oldest message (and, in some pages, a number from CSS or a URL).  Prefer
+    explicit code nodes and then visible OpenAI/ChatGPT subject text; both
+    preserve the mailbox's newest-first order.
+    """
+    raw = str(text or "")
+    for pattern in (HTML_CODE_RE, HTML_SUBJECT_RE):
+        match = pattern.search(raw)
+        if match:
+            return match.group(1)
+
+    visible = re.sub(r"(?is)<(style|script)\b.*?</\1>", " ", raw)
+    visible = re.sub(r"<[^>]+>", " ", visible)
+    matches = OTP_RE.findall(visible)
+    return matches[0] if matches else ""
 
 
 def fetch_latest_otp(mail_api: str, *, issued_after: float | None = None, timeout: float = 20.0) -> str:

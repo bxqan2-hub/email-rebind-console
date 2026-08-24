@@ -6,3 +6,7 @@ __pycache__/
 .env
 integrations/chatgpt_rebind_standalone/outputs/rebind_runs/
 integrations/chatgpt_rebind_standalone/outputs/session_export/
+**/outputs/rebind_runs/**
+!**/outputs/rebind_runs/.gitkeep
+**/outputs/session_export/**
+!**/outputs/session_export/.gitkeep
