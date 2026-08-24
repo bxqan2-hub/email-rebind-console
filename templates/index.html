@@ -81,7 +81,7 @@
           <div class="actions"><a class="btn ghost" href="{{ gcash_url }}" target="_blank" rel="noopener">新窗口打开</a></div>
         </div>
         <div class="gcash-meta">上游版本 <code>{{ gcash_upstream_commit }}</code> · 本地服务 <code>{{ gcash_url }}</code></div>
-        <iframe id="gcashFrame" title="GCash提链工作台" data-src="{{ gcash_url }}" loading="lazy"></iframe>
+        <iframe id="gcashFrame" title="GCash提链工作台" data-src="{{ gcash_url }}?embed={{ gcash_upstream_commit }}" loading="lazy"></iframe>
       </article>
     </section>
   </main>

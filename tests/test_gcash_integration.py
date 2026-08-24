@@ -29,6 +29,10 @@ class GCashIntegrationTests(unittest.TestCase):
         self.assertIn('data-view="gcash"', html)
         self.assertIn('id="view-gcash"', html)
         self.assertIn('id="gcashFrame"', html)
+        self.assertIn(
+            f'data-src="{gcash_service.status()["url"]}?embed={gcash_service.UPSTREAM_COMMIT}"',
+            html,
+        )
         self.assertIn("frame.dataset.src", script)
         self.assertIn("data-push-gcash", script)
         self.assertIn("pushAccessTokenToGCash", script)
