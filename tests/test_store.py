@@ -174,6 +174,36 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(store.list_accounts()[0]["status"], "review")
                 self.assertEqual(store.list_replacements()[0]["status"], "review")
 
+    def test_late_success_clears_stale_stop_and_error_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"):
+                store.import_source_accounts("old@example.com----https://mail.example/old")
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                task = store.reserve_batch()[0]
+                store.update_task(task["id"], stage="changed", email_change_confirmed=True)
+                store.request_task_stop(task["id"])
+                store.finish_stopped(task["id"])
+
+                store.finish_success(task["id"], {
+                    "email": "new@example.com",
+                    "access_token": "at-new",
+                })
+
+                finished = store.list_tasks()[0]
+                account = store.list_accounts()[0]
+                replacement = store.list_replacements()[0]
+                self.assertEqual(finished["status"], "success")
+                self.assertEqual(account["current_email"], "new@example.com")
+                self.assertEqual(replacement["status"], "used")
+                for row in (finished, account, replacement):
+                    self.assertNotIn("error", row)
+                    self.assertNotIn("stop_requested", row)
+                    self.assertNotIn("stop_requested_at", row)
+                self.assertNotIn("email_change_uncertain", finished)
+
     def test_delete_all_proxies_keeps_active_task_proxy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

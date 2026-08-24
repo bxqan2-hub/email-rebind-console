@@ -1375,6 +1375,16 @@ def finish_success(task_id: int, result: dict) -> None:
         if cdp_port:
             task["roxy_cdp_port"] = cdp_port
             account["roxy_cdp_port"] = cdp_port
+        # A stop/failure can race with an upstream protocol result that has
+        # already committed the email change.  Once the verified bundle is
+        # accepted, remove every stale terminal marker so the UI cannot keep
+        # presenting the reconciled task as stopped or failed.
+        for key in (
+            "error", "retryable", "stop_requested", "stop_requested_at",
+            "email_change_uncertain", "failure_code", "failure_reason",
+            "failed_at", "next_retry_at",
+        ):
+            task.pop(key, None)
         account.pop("active_task_id", None)
         account.pop("error", None)
         account.pop("email_change_uncertain", None)
@@ -1383,7 +1393,7 @@ def finish_success(task_id: int, result: dict) -> None:
             "bound_old_email": task.get("old_email"), "bound_account_id": account.get("id"),
         })
         replacement.pop("active_task_id", None)
-        for key in ("failure_code", "failure_reason", "failed_at"):
+        for key in ("error", "failure_code", "failure_reason", "failed_at"):
             replacement.pop(key, None)
         _write(_TASKS, tasks)
         _write(_ACCOUNTS, accounts)
