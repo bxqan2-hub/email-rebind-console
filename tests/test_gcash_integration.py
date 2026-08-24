@@ -38,9 +38,10 @@ class GCashIntegrationTests(unittest.TestCase):
         self.assertIn("pushAccessTokenToGCash", script)
         self.assertIn("pushSelectedAccessTokensToGCash", script)
         upstream_script = (gcash_service.UPSTREAM_ROOT / "web" / "app.js").read_text(encoding="utf-8")
-        self.assertNotIn('email-rebind:push-at', upstream_script)
-        self.assertNotIn('event.source !== window.parent', upstream_script)
-        self.assertNotIn('event.origin !== REBIND_PARENT_ORIGIN', upstream_script)
+        self.assertIn('email-rebind:push-at', upstream_script)
+        self.assertIn('event.source !== window.parent', upstream_script)
+        self.assertIn('event.origin !== REBIND_PARENT_ORIGIN', upstream_script)
+        self.assertIn('Array.isArray(payload.accounts)', upstream_script)
         self.assertNotIn('id="jobConcurrency"', (gcash_service.UPSTREAM_ROOT / "web" / "index.html").read_text(encoding="utf-8"))
 
     def test_health_exposes_gcash_companion_status(self):

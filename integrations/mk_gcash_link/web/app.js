@@ -649,6 +649,38 @@ $("refreshQr").onclick = () => refreshAccount(state.modalAccountId);
 document.querySelectorAll(".step").forEach(button => {
   button.onclick = () => goStep(Number(button.dataset.step));
 });
+const REBIND_PARENT_ORIGIN = (() => {
+  try {
+    return document.referrer ? new URL(document.referrer).origin : "";
+  } catch {
+    return "";
+  }
+})();
+window.addEventListener("message", event => {
+  if (
+    !REBIND_PARENT_ORIGIN
+    || event.source !== window.parent
+    || event.origin !== REBIND_PARENT_ORIGIN
+  ) return;
+  const payload = event.data && typeof event.data === "object" ? event.data : {};
+  if (payload.type !== "email-rebind:push-at") return;
+  const incoming = Array.isArray(payload.accounts) && payload.accounts.length
+    ? payload.accounts
+    : [{accessToken: payload.accessToken, email: payload.email}];
+  const seen = new Set();
+  const rows = incoming.map(item => {
+    const match = String(item?.accessToken || "").match(JWT_RE);
+    if (!match || seen.has(match[1])) return "";
+    seen.add(match[1]);
+    const email = String(item?.email || "").trim();
+    return email ? `${email}|${match[1]}` : match[1];
+  }).filter(Boolean);
+  if (!rows.length) return;
+  $("tokenInput").value = rows.join("\n");
+  $("importStatus").textContent = `已从换绑完成账号接收 ${rows.length} 个 AT`;
+  updateInputCounts();
+  parseAccounts();
+});
 document.addEventListener("keydown", event => { if (event.key === "Escape") closeQr(); });
 setInterval(() => {
   document.querySelectorAll("[data-expiry]").forEach(node => {
