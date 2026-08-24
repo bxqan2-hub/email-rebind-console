@@ -51,13 +51,13 @@
       </article>
 
       <article class="card result-card">
-        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>按原邮箱导入类型轮转：密码账号复制“原邮箱----换绑后邮箱----密码----2FA----AT”；URL 账号复制“原邮箱----换绑后邮箱----替换邮箱URL----AT”。</p></div><div class="actions"><button class="btn ghost" id="copyExport">复制完成结果</button></div></div>
+        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>按原邮箱导入类型轮转：密码账号复制“原邮箱----换绑后邮箱----密码----2FA----AT”；URL 账号复制“原邮箱----换绑后邮箱----替换邮箱URL----AT”。可选择结果记录后批量清理。</p></div><div class="actions"><label><input type="checkbox" id="selectResultAll"> 全选结果</label><button class="btn ghost" id="copyExport">复制完成结果</button><button class="btn danger" id="cleanupSelectedResults" disabled>清理所选结果</button></div></div>
         <div id="recentTasks" class="task-list"></div>
       </article>
 
       <article class="card success-account-card">
-        <div class="card-head"><div><h2>换绑完成账号</h2><p>成功窗口默认保持登录；重新获取 AT 后会原子保存，界面自动刷新并显示“AT 已更新”或“AT 未变化”。“复制AT”只复制该账号的单独 AT；“关闭并删除”会永久删除对应 Roxy Profile。</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>原邮箱 → 换绑后邮箱</th><th>AT 状态</th><th>Roxy 窗口</th><th>Profile</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="successAccountsBody"></tbody></table></div>
+        <div class="card-head responsive"><div><h2>换绑完成账号</h2><p>成功窗口默认保持登录；重新获取 AT 后会原子保存，界面自动刷新并显示“AT 已更新”或“AT 未变化”。选择账号后可批量复制 AT 或清理账号；“复制AT”只复制该账号的单独 AT；“关闭并删除”会永久删除对应 Roxy Profile。</p></div><div class="actions"><label><input type="checkbox" id="selectSuccessAll"> 全选账号</label><button class="btn primary" id="copySelectedAT" disabled>复制所选 AT</button><button class="btn danger" id="cleanupSelectedAccounts" disabled>清理所选账号</button></div></div>
+        <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectSuccessAllTable"></th><th>原邮箱 → 换绑后邮箱</th><th>AT 状态</th><th>Roxy 窗口</th><th>Profile</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="successAccountsBody"></tbody></table></div>
       </article>
     </section>
 
