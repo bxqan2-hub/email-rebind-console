@@ -75,13 +75,8 @@
     </section>
 
     <section class="view hidden" id="view-gcash">
-      <article class="card gcash-shell">
-        <div class="card-head responsive">
-          <div><h2>GCash提链</h2><p>支持批量 AT、每号一条代理和可调并发；任务数据仅保存在当前 Python 进程内。</p></div>
-          <div class="actions"><a class="btn ghost" href="{{ gcash_url }}" target="_blank" rel="noopener">新窗口打开</a></div>
-        </div>
-        <div class="gcash-meta">上游版本 <code>{{ gcash_upstream_commit }}</code> · 本地服务 <code>{{ gcash_url }}</code></div>
-        <iframe id="gcashFrame" title="GCash提链工作台" data-src="{{ gcash_url }}?embed={{ gcash_upstream_commit }}" loading="lazy"></iframe>
+      <article class="gcash-shell">
+        <iframe id="gcashFrame" title="GCash提链" data-src="{{ gcash_url }}?embed={{ gcash_upstream_commit }}" loading="lazy"></iframe>
       </article>
     </section>
   </main>

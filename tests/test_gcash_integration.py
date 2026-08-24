@@ -33,6 +33,8 @@ class GCashIntegrationTests(unittest.TestCase):
             f'data-src="{gcash_service.status()["url"]}?embed={gcash_service.UPSTREAM_COMMIT}"',
             html,
         )
+        self.assertNotIn('class="gcash-meta"', html)
+        self.assertNotIn('GCash提链</h2>', html)
         self.assertIn("frame.dataset.src", script)
         self.assertIn("data-push-gcash", script)
         self.assertIn("pushAccessTokenToGCash", script)
