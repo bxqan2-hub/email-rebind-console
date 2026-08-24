@@ -81,7 +81,10 @@ def run_upstream_rebind(
         proxy=proxy_url or None,
         mail_timeout=float(settings.OTP_MAX_WAIT),
     )
-    _stop(stop_check)
+    # Do not abort after the upstream pipeline returns.  The standalone flow
+    # may already have committed the email change and exported the new AT;
+    # turning a user stop request at this boundary into ``stopped`` would hide
+    # a successful upstream result and leave the local task state stale.
     if not result.ok:
         _raise_upstream_failure(result, new_email)
 

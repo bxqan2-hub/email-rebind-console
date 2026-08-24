@@ -4,4 +4,5 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 .env
-
+integrations/chatgpt_rebind_standalone/outputs/rebind_runs/
+integrations/chatgpt_rebind_standalone/outputs/session_export/

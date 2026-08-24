@@ -63,6 +63,30 @@ class ProtocolFlowTests(unittest.TestCase):
                 proxy_url="http://proxy.example:8080",
             )
 
+    def test_stop_requested_after_upstream_success_does_not_hide_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle_path = Path(tmp) / "login_bundle.json"
+            bundle_path.write_text(json.dumps({
+                "email": "new@example.com", "access_token": "at-new",
+            }), encoding="utf-8")
+            upstream_result = protocol_flow.RebindResult(
+                ok=True, old_email="old@example.com", new_email="new@example.com",
+                session_email="new@example.com", bundle_path=str(bundle_path),
+            )
+            stop_check = Mock(side_effect=[False, True])
+            with patch.object(protocol_flow, "run_rebind_email", return_value=upstream_result):
+                result = protocol_flow.run_upstream_rebind(
+                    old_email="old@example.com", new_email="new@example.com",
+                    password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                    api_url="https://mail.example/code",
+                    proxy_url="http://proxy.example:8080",
+                    stop_check=stop_check,
+                )
+
+        self.assertEqual(result["email"], "new@example.com")
+        self.assertEqual(result["access_token"], "at-new")
+        self.assertEqual(stop_check.call_count, 1)
+
     def test_upstream_lock_matches_vendored_source(self):
         lock = json.loads(Path("integrations/upstream-lock.json").read_text(encoding="utf-8"))
         source = next(item for item in lock["runtime_projects"] if item["name"] == "chatgpt-rebind-standalone")
