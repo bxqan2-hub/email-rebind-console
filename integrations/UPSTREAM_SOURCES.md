@@ -55,7 +55,10 @@ first explicit OTP card (and avoids CSS/URL numbers) instead of the final
 six-digit match. Timestamped cards older than the current `begin` window are
 ignored while polling, so delivery latency cannot cause immediate submission
 of the previous run's code. The adapted combined tree SHA-256 is
-`313a43d43c3161757b38039e95842b891573623303ebd3498ab46f3aa21668ad`.
+`aed98c25c6cb70204889a19a6e4a0eb2350556f87a7e2f129a6298994f927ce7`.
+On Windows, `registration_core/sentinel_quickjs.py` passes
+`CREATE_NO_WINDOW` when spawning the Node Sentinel helper, preventing a
+console window flash without changing the Sentinel payload or protocol.
 Upstream runtime bundles, cookies, access tokens, and traces remain under its
 ignored `outputs/` paths and are not committed.
 

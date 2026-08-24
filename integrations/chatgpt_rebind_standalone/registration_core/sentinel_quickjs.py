@@ -155,18 +155,23 @@ def _run_quickjs_action(
     body = dict(payload)
     body["action"] = action
     with _NODE_ACTION_SLOTS:
-        proc = subprocess.run(
-            [_resolve_node_binary(), "-e", _WRAPPER_JS],
-            input=json.dumps(body, ensure_ascii=False),
-            text=True,
-            capture_output=True,
-            timeout=max(10, int(timeout_ms / 1000) + 5),
-            env={
+        run_kwargs = {
+            "input": json.dumps(body, ensure_ascii=False),
+            "text": True,
+            "capture_output": True,
+            "timeout": max(10, int(timeout_ms / 1000) + 5),
+            "env": {
                 **os.environ,
                 "OPENAI_SENTINEL_SDK_FILE": str(sdk_file),
                 "OPENAI_SENTINEL_QUICKJS_SCRIPT": str(quickjs_script),
                 "OPENAI_SENTINEL_VM_TIMEOUT_MS": str(min(timeout_ms, 30000)),
             },
+        }
+        if os.name == "nt":
+            run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        proc = subprocess.run(
+            [_resolve_node_binary(), "-e", _WRAPPER_JS],
+            **run_kwargs,
         )
     if proc.returncode != 0:
         raise RuntimeError(f"QuickJS 执行失败: {(proc.stderr or proc.stdout or 'unknown').strip()[:300]}")

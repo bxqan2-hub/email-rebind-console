@@ -12,9 +12,10 @@
       "commit": "e27b3217dbfddab19e83dc57ab225173877e4663",
       "path": "integrations/chatgpt_rebind_standalone",
       "entrypoint": "rebind_core.pipeline.run_rebind_email",
-      "tree_sha256": "313a43d43c3161757b38039e95842b891573623303ebd3498ab46f3aa21668ad",
+      "tree_sha256": "aed98c25c6cb70204889a19a6e4a0eb2350556f87a7e2f129a6298994f927ce7",
       "local_adaptations": [
-        "rebind_core/mail_inbox.py: prefer the newest explicit HTML OTP card and wait until its displayed minute reaches the current begin window"
+        "rebind_core/mail_inbox.py: prefer the newest explicit HTML OTP card and wait until its displayed minute reaches the current begin window",
+        "registration_core/sentinel_quickjs.py: launch the Windows Node helper with CREATE_NO_WINDOW"
       ]
     }
   ]
