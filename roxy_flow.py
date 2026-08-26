@@ -366,6 +366,7 @@ def _complete_login(
     deadline = time.monotonic() + 120
     password_sent = False
     totp_sent_at = 0.0
+    totp_submitted = False
     email_otp_sent = False
     otp_hint_since = 0.0
     while time.monotonic() < deadline:
@@ -390,9 +391,13 @@ def _complete_login(
             time.sleep(2)
             continue
         text = _body_text(driver).lower()
-        code_input = _visible_input(driver, [
+        explicit_totp_input = _visible_input(driver, [
+            'input[name*="totp" i]', 'input[id*="totp" i]',
+            'input[name*="authenticator" i]', 'input[id*="authenticator" i]',
+        ])
+        code_input = explicit_totp_input or _visible_input(driver, [
             'input[name="verification_code"]',
-            'input[name*="totp" i]', 'input[id*="totp" i]', 'input[autocomplete="one-time-code"]',
+            'input[autocomplete="one-time-code"]',
             'input[inputmode="numeric"]', 'input[name="code"]', 'input[type="tel"]',
             'input[id*="verification" i]', 'input[name*="verification" i]',
             'input[aria-label*="code" i]', 'input[data-testid*="code" i]',
@@ -400,6 +405,17 @@ def _complete_login(
         totp_page = any(marker in text for marker in (
             "authenticator", "two-factor", "2fa", "verification app", "身份验证器", "动态验证码", "인증 앱",
         ))
+        if (
+            code_input
+            and password_sent
+            and str(totp_secret or "").strip()
+            and not totp_submitted
+            and not email_otp_sent
+        ):
+            # Auth pages sometimes expose only a generic verification_code
+            # input after the password step. For password+2FA accounts this
+            # is the TOTP challenge; do not consume the mailbox API first.
+            totp_page = True
         if code_input and totp_page and time.monotonic() - totp_sent_at > 8:
             if not str(totp_secret or "").strip():
                 raise RuntimeError(f"{email_label}登录要求 2FA，但导入的原邮箱记录没有 MFA Secret")
@@ -408,6 +424,7 @@ def _complete_login(
             _set_otp_value(driver, code_input, code)
             _submit_near(driver, code_input)
             totp_sent_at = time.monotonic()
+            totp_submitted = True
             time.sleep(2)
             continue
         # 新版 Auth 页面有时只渲染数字输入框，正文没有稳定的英文提示；
@@ -488,6 +505,7 @@ def _login_with_replacement_email(
     submit_email,
     progress: Callable[[str, str], None],
     api_url: str,
+    auth_method: str = "",
     max_relogin_retries: int | None = None,
     stop_check: Callable[[], bool] | None = None,
 ) -> tuple[dict, str, str]:
@@ -496,6 +514,10 @@ def _login_with_replacement_email(
     total_attempts = max(1, min(int(retries or 0), 10) + 1)
     last_error: Exception | None = None
     stop_check = stop_check or (lambda: False)
+    password_totp_login = auth_method == "password_totp" or bool(
+        str(password or "").strip() and str(totp_secret or "").strip()
+    )
+    email_api_url = "" if password_totp_login else str(api_url or "").strip()
     for login_attempt in range(1, total_attempts + 1):
         if stop_check():
             raise TaskStopRequested("用户已请求停止")
@@ -504,11 +526,12 @@ def _login_with_replacement_email(
             f"第 {login_attempt}/{total_attempts} 次使用替换邮箱重新登录：{email}",
         )
         previous_otp = None
-        try:
-            previous_otp = mail_api.read_current_otp(api_url, email, timeout=4)
-        except Exception:
-            # 取码接口的瞬时错误由 wait_for_new_otp 在验证码页继续轮询并给出诊断。
-            pass
+        if email_api_url:
+            try:
+                previous_otp = mail_api.read_current_otp(email_api_url, email, timeout=4)
+            except Exception:
+                # 取码接口的瞬时错误由 wait_for_new_otp 在验证码页继续轮询并给出诊断。
+                pass
         _clear_login_state(driver)
         safe_get(
             driver,
@@ -528,7 +551,7 @@ def _login_with_replacement_email(
                 totp_secret,
                 fetch_session,
                 progress,
-                email_api_url=api_url,
+                email_api_url=email_api_url,
                 previous_email_otp=previous_otp,
                 email_label="替换邮箱",
                 stop_check=stop_check,
@@ -566,6 +589,7 @@ def perform_replacement_login(
     password: str,
     totp_secret: str,
     api_url: str,
+    auth_method: str = "",
     proxy_url: str,
     progress: Callable[[str, str], None] | None = None,
     proxy_verified: Callable[[dict], None] | None = None,
@@ -620,6 +644,7 @@ def perform_replacement_login(
                 submit_email=submit_email,
                 progress=progress,
                 api_url=api_url,
+                auth_method=auth_method,
                 max_relogin_retries=max_relogin_retries,
                 stop_check=stop_check,
             )
