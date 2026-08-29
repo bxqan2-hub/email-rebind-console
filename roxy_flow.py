@@ -407,7 +407,6 @@ def _complete_login(
         ))
         if (
             code_input
-            and password_sent
             and str(totp_secret or "").strip()
             and not totp_submitted
             and not email_otp_sent

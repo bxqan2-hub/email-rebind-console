@@ -37,6 +37,7 @@ def test_historical_full_roxy_module_contains_complete_flow():
     assert "_change_email_har_guided(" in source
     assert "client.open_profile" in source
     assert "_retain_browser(" in source
+    assert "if code_input and password_totp_login and not totp_submitted" in source
 
 
 def test_worker_dispatches_browser_mode_to_restored_flow(tmp_path):

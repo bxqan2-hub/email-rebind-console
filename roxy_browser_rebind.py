@@ -648,7 +648,7 @@ def _complete_login(
         password_totp_login = auth_method == "password_totp" or bool(
             str(password or "").strip() and str(totp_secret or "").strip()
         )
-        if code_input and password_sent and password_totp_login and not totp_submitted and not email_otp_sent:
+        if code_input and password_totp_login and not totp_submitted and not email_otp_sent:
             totp_page = True
         if code_input and totp_page and time.monotonic() - totp_sent_at > 8:
             if not str(totp_secret or "").strip():

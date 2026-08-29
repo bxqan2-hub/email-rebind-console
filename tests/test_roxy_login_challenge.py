@@ -10,7 +10,6 @@ SOURCE = Path("roxy_flow.py").read_text(encoding="utf-8")
 
 def test_password_totp_login_prioritizes_generic_code_input_as_totp():
     assert "totp_submitted = False" in SOURCE
-    assert "and password_sent" in SOURCE
     assert "and not totp_submitted" in SOURCE
     assert "totp_page = True" in SOURCE
 
