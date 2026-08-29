@@ -133,3 +133,22 @@ def test_detection_proxy_delete_route_removes_proxy_and_blocks_active_check(tmp_
 
     assert blocked.status_code == 409
     assert blocked.get_json()["reason"] == "active_check"
+
+
+def test_delete_all_detection_proxies_keeps_active_and_removes_idle(tmp_path):
+    with (
+        patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"),
+        patch.object(store, "_DETECTION_PROXIES", tmp_path / "资格检测代理.json"),
+    ):
+        store.import_detection_proxies("ID|socks5h://one.example:3000\nUS|socks5h://two.example:3000")
+        rows = store.list_detection_proxies()
+        store._write(store._ACCOUNTS, [{
+            "id": 8, "status": "success", "trial_check_status": "running",
+            "trial_check_proxy_id": rows[0]["id"],
+        }])
+        result = store.delete_all_detection_proxies()
+        remaining = store.list_detection_proxies()
+
+    assert result["deleted"] == 1
+    assert result["skipped_count"] == 1
+    assert remaining[0]["id"] == rows[0]["id"]

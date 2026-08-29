@@ -239,6 +239,37 @@ def delete_detection_proxy(proxy_id: int) -> dict:
         return {"deleted": True, "item": _public_detection_proxy(row)}
 
 
+def delete_all_detection_proxies() -> dict:
+    """Delete all qualification-check proxies not used by an active check."""
+    with _LOCK:
+        rows = _read(_DETECTION_PROXIES)
+        active_by_proxy: dict[int, dict] = {}
+        for account in _read(_ACCOUNTS):
+            if str(account.get("trial_check_status") or "") not in {"queued", "running"}:
+                continue
+            proxy_id = int(account.get("trial_check_proxy_id") or 0)
+            if proxy_id > 0:
+                active_by_proxy.setdefault(proxy_id, account)
+        kept: list[dict] = []
+        deleted: list[dict] = []
+        skipped: list[dict] = []
+        for row in rows:
+            proxy_id = int(row.get("id") or 0)
+            active = active_by_proxy.get(proxy_id)
+            if active is not None:
+                kept.append(row)
+                skipped.append({"id": proxy_id, "account_id": int(active.get("id") or 0)})
+                continue
+            deleted.append(_public_detection_proxy(row))
+        _write(_DETECTION_PROXIES, kept)
+        return {
+            "deleted": len(deleted),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "items": deleted,
+        }
+
+
 def pick_detection_proxy() -> dict | None:
     with _LOCK:
         rows = _read(_DETECTION_PROXIES)

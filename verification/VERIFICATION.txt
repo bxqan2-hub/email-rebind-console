@@ -1,11 +1,12 @@
-AT qualification detection proxy delete verification
-===============================================
+AT资格检测代理池一键删除验证
+============================
 
 Changed branch/field
 --------------------
-- Added `DELETE /api/detection-proxies/<proxy_id>` with not-found and active-check responses.
-- Added a detection-proxy table with masked proxy, country, status, last exit/check, and a per-row 删除 button.
-- Delete is disabled/rejected while a running or queued account qualification check is using that proxy.
+- AT资格检测代理池新增“ 一键删除代理 ”按钮。
+- 新增 `DELETE /api/detection-proxies` 批量接口，一次删除所有空闲检测代理。
+- 正在被 queued/running 资格检测使用的代理会保留，并返回 skipped_count 与账号编号。
+- 单个删除按钮已从界面移除，避免误操作为逐条删除。
 
 Artifacts
 ---------
@@ -17,7 +18,7 @@ Artifacts
 BASELINE
 --------
 Command: `$env:PYTHONPATH='.'; pytest -q tests`
-Input: repository at commit 239c0ac before detection-proxy delete changes.
+Input: repository at commit 17eaca8 before bulk detection-proxy delete changes.
 Literal output/result:
 `106 passed, 5 subtests passed in 5.21s`
 Exit status: 0
@@ -26,9 +27,9 @@ Original store.py SHA256: `51FB75A1DD8C6B8AC9AFF442D1C3C6C98DF0C124AD725053BE14A
 MODIFIED
 --------
 Command: `$env:PYTHONPATH='.'; py -3 -m pytest -q tests`
-Input: modified working tree with detection-proxy table, delete route, and active-check guard.
+Input: modified working tree with one-click detection-proxy deletion and active-check retention.
 Literal output/result:
-`107 passed, 5 subtests passed in 5.10s`
+`108 passed, 5 subtests passed in 6.15s`
 Command: `node --check static/app.js`
 Literal output/result: no output.
 Exit status: 0

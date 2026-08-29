@@ -167,6 +167,11 @@ def create_app(*, recover: bool = True) -> Flask:
             **result,
         }), 409
 
+    @app.delete("/api/detection-proxies")
+    def api_delete_all_detection_proxies():
+        result = store.delete_all_detection_proxies()
+        return jsonify({"ok": True, **result})
+
     @app.post("/api/accounts/check-trial")
     def api_check_all_trials():
         accepted = []
