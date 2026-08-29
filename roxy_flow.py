@@ -408,7 +408,6 @@ def _complete_login(
         if (
             code_input
             and str(totp_secret or "").strip()
-            and not totp_submitted
             and not email_otp_sent
         ):
             # Auth pages sometimes expose only a generic verification_code
@@ -425,6 +424,10 @@ def _complete_login(
             totp_sent_at = time.monotonic()
             totp_submitted = True
             time.sleep(2)
+            continue
+        if code_input and str(totp_secret or "").strip() and not email_otp_sent:
+            # Keep a password+2FA account on the TOTP path across rerenders.
+            time.sleep(1)
             continue
         # 新版 Auth 页面有时只渲染数字输入框，正文没有稳定的英文提示；
         # 只要不是 2FA 页面且存在 OTP 语义输入框，就交给对应邮箱 API 取码。

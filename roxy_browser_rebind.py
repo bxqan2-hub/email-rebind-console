@@ -648,7 +648,7 @@ def _complete_login(
         password_totp_login = auth_method == "password_totp" or bool(
             str(password or "").strip() and str(totp_secret or "").strip()
         )
-        if code_input and password_totp_login and not totp_submitted and not email_otp_sent:
+        if code_input and password_totp_login and not email_otp_sent:
             totp_page = True
         if code_input and totp_page and time.monotonic() - totp_sent_at > 8:
             if not str(totp_secret or "").strip():
@@ -660,6 +660,11 @@ def _complete_login(
             totp_sent_at = time.monotonic()
             totp_submitted = True
             time.sleep(2)
+            continue
+        if code_input and password_totp_login and not email_otp_sent:
+            # Keep a password+2FA account on the TOTP path across rerenders;
+            # Auth may remove the textual 2FA label after the first submit.
+            time.sleep(1)
             continue
         # 新版 Auth 页面有时只渲染数字输入框，正文没有稳定的英文提示；
         # 只要不是 2FA 页面且存在 OTP 语义输入框，就交给对应邮箱 API 取码。
