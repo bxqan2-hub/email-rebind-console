@@ -32,6 +32,13 @@ On Windows, the local Sentinel Node bridge is launched with `CREATE_NO_WINDOW`;
 this is a process-display adapter only and leaves the upstream Sentinel payload
 and protocol unchanged.
 
+The successful-account 0元试用 qualification display reuses the main project's
+`core/chatgpt_plan.py` and `core/detection_proxy.py` through `trial_check.py`.
+The check reads the upstream `accounts/check` campaign metadata, classifies the
+`free_trial` offer, and records the labeled detection-proxy country (for example
+`ID`) beside the successful account. It runs automatically after a new AT is
+saved and again after an AT refresh.
+
 Before updating, fetch the source repository, compare it with the vendored tree,
 update `upstream-lock.json`, run its unit tests, then run the complete rebind
 console test suite.

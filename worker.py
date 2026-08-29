@@ -11,11 +11,13 @@ import roxy_browser_rebind as browser_rebind
 import protocol_flow
 import settings
 import store
+import trial_check
 
 logger = logging.getLogger(__name__)
 _LOCK = threading.RLock()
 _EXECUTORS: list[ThreadPoolExecutor] = []
 _ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-action")
+_TRIAL_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-trial")
 
 
 _TRANSIENT_STAGES = {
@@ -72,6 +74,7 @@ def _refresh_access_token(account_id: int) -> None:
                 proxy_url=proxy_url,
             )
         store.finish_access_token_refresh(account_id, result)
+        submit_trial_check(account_id)
     except Exception as exc:  # noqa: BLE001 - 操作结果必须回写页面状态
         logger.exception("成功账号 #%s 重新获取 AT 失败", account_id)
         store.fail_access_token_refresh(
@@ -93,6 +96,40 @@ def submit_access_token_refresh(account_id: int) -> dict:
         store.fail_access_token_refresh(account_id, f"后台任务提交失败：{type(exc).__name__}: {exc}")
         raise
     return {"accepted": True, "account_id": int(account_id)}
+
+
+def submit_trial_check(account_id: int) -> dict:
+    account = store.get_success_account_context(account_id)
+    if not account or not str(account.get("access_token") or "").strip():
+        return {"accepted": False, "busy": False, "error": "成功账号暂无 AT"}
+    if not store.list_detection_proxies():
+        store.finish_trial_check(account_id, {"ok": False, "error": "未配置资格检测代理"})
+        return {"accepted": False, "busy": False, "error": "未配置资格检测代理"}
+    current = store.begin_trial_check(account_id)
+    if not current:
+        account = store.get_success_account_context(account_id) or {}
+        if account.get("trial_check_status") == "running":
+            return {"accepted": False, "busy": True, "error": "该账号正在检测资格"}
+        return {"accepted": False, "busy": False, "error": "账号无法启动资格检测"}
+    # begin_trial_check marks it running; hand the captured context directly to
+    # avoid claiming the same account a second time inside the worker.
+    def run_captured() -> None:
+        proxy = current["proxy"]
+        try:
+            result = trial_check.check_zero_trial(
+                current["access_token"],
+                f'{proxy.get("country") or ""}|{proxy.get("proxy_url") or ""}',
+            )
+        except Exception as exc:
+            result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}", "trial_proxy_country": str(proxy.get("country") or "").upper()}
+        store.finish_trial_check(account_id, result)
+        store.mark_detection_proxy_result(int(proxy.get("id") or 0), result)
+    try:
+        _TRIAL_EXECUTOR.submit(run_captured)
+    except Exception as exc:
+        store.finish_trial_check(account_id, {"ok": False, "error": f"后台资格检测提交失败：{type(exc).__name__}: {exc}"})
+        raise
+    return {"accepted": True, "account_id": int(account_id), "status": "running"}
 
 
 def _open_roxy_after_protocol(
@@ -313,6 +350,7 @@ def _run(task_id: int) -> None:
                         stop_check=stop_check,
                     )
             store.finish_success(current_task_id, result)
+            submit_trial_check(int(context["account"]["id"]))
             return
         except roxy_flow.TaskStopRequested as exc:
             logger.info("换绑任务 #%s 收到停止请求：%s", current_task_id, exc)

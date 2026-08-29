@@ -62,6 +62,7 @@ def create_app(*, recover: bool = True) -> Flask:
             "accounts": store.list_accounts(),
             "replacements": store.list_replacements(),
             "proxies": store.list_proxies(),
+            "detection_proxies": store.list_detection_proxies(),
             "tasks": store.list_tasks(),
             "settings": {"max_transient_retries": settings.MAX_TRANSIENT_RETRIES},
             "pool_name": "替换邮箱",
@@ -144,6 +145,32 @@ def create_app(*, recover: bool = True) -> Flask:
                 **result,
             }), 400
         return jsonify({"ok": True, **result})
+
+    @app.post("/api/detection-proxies/import")
+    def api_import_detection_proxies():
+        data = request.get_json(silent=True) or {}
+        result = store.import_detection_proxies(str(data.get("text") or ""))
+        if not result["parsed"]:
+            return jsonify({"ok": False, "error": "未识别到检测代理格式：ID|代理地址，或直接填写代理地址", **result}), 400
+        return jsonify({"ok": True, **result})
+
+    @app.post("/api/accounts/check-trial")
+    def api_check_all_trials():
+        accepted = []
+        for account in store.list_accounts():
+            if account.get("status") != "success":
+                continue
+            result = worker.submit_trial_check(int(account["id"]))
+            if result.get("accepted"):
+                accepted.append(int(account["id"]))
+        return jsonify({"ok": True, "accepted": accepted, "count": len(accepted)})
+
+    @app.post("/api/accounts/<int:account_id>/check-trial")
+    def api_check_trial(account_id: int):
+        result = worker.submit_trial_check(account_id)
+        if not result.get("accepted"):
+            return jsonify({"ok": False, **result}), 409
+        return jsonify({"ok": True, **result}), 202
 
     @app.post("/api/proxies/<int:proxy_id>/restore")
     def api_restore_proxy(proxy_id: int):

@@ -21,6 +21,7 @@ _ACCOUNTS = settings.DATA_DIR / "source_accounts.json"
 _REPLACEMENTS = settings.DATA_DIR / "替换邮箱.json"
 _TASKS = settings.DATA_DIR / "rebind_tasks.json"
 _PROXIES = settings.DATA_DIR / "换绑代理.json"
+_DETECTION_PROXIES = settings.DATA_DIR / "资格检测代理.json"
 _PROXY_RANDOM = random.SystemRandom()
 _SUPPORTED_PROXY_SCHEMES = {"http", "https", "socks5", "socks5h"}
 
@@ -141,6 +142,162 @@ def _public_proxy(row: dict) -> dict:
     public["display"] = _proxy_display(str(row.get("proxy_url") or ""))
     public["has_auth"] = bool(urlsplit(str(row.get("proxy_url") or "")).username)
     return public
+
+
+def _detection_proxy_label(raw: str) -> tuple[str, str]:
+    value = str(raw or "").strip()
+    if "|" not in value:
+        return "", value
+    label, proxy = value.split("|", 1)
+    return label.strip().upper(), proxy.strip()
+
+
+def _public_detection_proxy(row: dict) -> dict:
+    return {
+        key: value for key, value in row.items()
+        if key != "proxy_url"
+    } | {
+        "display": _proxy_display(str(row.get("proxy_url") or "")),
+        "has_auth": bool(urlsplit(str(row.get("proxy_url") or "")).username),
+    }
+
+
+def import_detection_proxies(text: str) -> dict:
+    """Import static proxies used only for AT trial/region checks.
+
+    Optional country labels use ``ID|socks5h://user:pass@host:port``.
+    """
+    parsed: list[dict] = []
+    invalid: list[dict] = []
+    for number, raw in enumerate(str(text or "").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        country, proxy_value = _detection_proxy_label(line)
+        if country and not re.fullmatch(r"[A-Z]{2}", country):
+            invalid.append({"line": number, "reason": "地区必须是两位国家代码，例如 ID|代理地址"})
+            continue
+        try:
+            proxy_url = _normalize_proxy_url(proxy_value)
+        except ValueError as exc:
+            invalid.append({"line": number, "reason": str(exc)})
+            continue
+        parsed.append({"proxy_url": proxy_url, "country": country})
+
+    with _LOCK:
+        rows = _read(_DETECTION_PROXIES)
+        by_url = {str(row.get("proxy_url") or "").lower(): row for row in rows}
+        inserted = updated = 0
+        now = _now()
+        for item in parsed:
+            key = item["proxy_url"].lower()
+            row = by_url.get(key)
+            if row is None:
+                row = {
+                    "id": _next_id(rows), "proxy_url": item["proxy_url"],
+                    "country": item["country"], "status": "available", "created_at": now,
+                }
+                rows.append(row)
+                by_url[key] = row
+                inserted += 1
+            else:
+                updated += 1
+                row["country"] = item["country"] or str(row.get("country") or "").upper()
+                if row.get("status") != "failed":
+                    row["status"] = "available"
+            row["updated_at"] = now
+        _write(_DETECTION_PROXIES, rows)
+    return {"parsed": len(parsed), "inserted": inserted, "updated": updated, "invalid": invalid}
+
+
+def list_detection_proxies() -> list[dict]:
+    with _LOCK:
+        return [_public_detection_proxy(row) for row in sorted(_read(_DETECTION_PROXIES), key=lambda item: int(item.get("id") or 0))]
+
+
+def pick_detection_proxy() -> dict | None:
+    with _LOCK:
+        rows = _read(_DETECTION_PROXIES)
+        candidates = [row for row in rows if row.get("status") == "available"]
+        if not candidates:
+            return None
+        row = candidates[0]
+        row["last_used_at"] = _now()
+        row["updated_at"] = row["last_used_at"]
+        _write(_DETECTION_PROXIES, rows)
+        return dict(row) | {"display": _proxy_display(str(row.get("proxy_url") or ""))}
+
+
+def mark_detection_proxy_result(proxy_id: int, result: dict) -> None:
+    with _LOCK:
+        rows = _read(_DETECTION_PROXIES)
+        row = next((item for item in rows if int(item.get("id") or 0) == int(proxy_id)), None)
+        if not row:
+            return
+        now = _now()
+        country = str(result.get("trial_proxy_country") or "").strip().upper()
+        if country:
+            row["last_country"] = country
+            if not row.get("country"):
+                row["country"] = country
+        if result.get("trial_proxy_exit_ip"):
+            row["last_exit_ip"] = str(result.get("trial_proxy_exit_ip"))
+        row["last_check_at"] = result.get("checked_at") or now
+        row["last_error"] = str(result.get("error") or "")[:500]
+        row["check_count"] = int(row.get("check_count") or 0) + 1
+        row["updated_at"] = now
+        _write(_DETECTION_PROXIES, rows)
+
+
+def begin_trial_check(account_id: int) -> dict | None:
+    with _LOCK:
+        accounts = _read(_ACCOUNTS)
+        row = next((item for item in accounts if int(item.get("id") or 0) == int(account_id)), None)
+        if not row or row.get("status") != "success" or not str(row.get("access_token") or "").strip():
+            return None
+        if row.get("trial_check_status") in {"queued", "running"}:
+            return None
+        proxy = next((item for item in _read(_DETECTION_PROXIES) if item.get("status") == "available"), None)
+        now = _now()
+        if not proxy:
+            row.update({"trial_check_status": "not_configured", "trial_check_error": "未配置资格检测代理", "updated_at": now})
+            _write(_ACCOUNTS, accounts)
+            return None
+        row.update({
+            "trial_check_status": "running", "trial_check_started_at": now,
+            "trial_check_proxy_id": int(proxy.get("id") or 0),
+            "trial_check_proxy_country": str(proxy.get("country") or "").upper(),
+            "trial_check_proxy_display": _proxy_display(str(proxy.get("proxy_url") or "")),
+            "trial_check_error": "", "updated_at": now,
+        })
+        _write(_ACCOUNTS, accounts)
+        return {"account_id": int(account_id), "access_token": str(row.get("access_token") or ""), "proxy": dict(proxy)}
+
+
+def finish_trial_check(account_id: int, result: dict) -> dict | None:
+    with _LOCK:
+        accounts = _read(_ACCOUNTS)
+        row = next((item for item in accounts if int(item.get("id") or 0) == int(account_id)), None)
+        if not row or row.get("status") != "success":
+            return None
+        ok = bool(result.get("ok"))
+        not_configured = str(result.get("error") or "").strip() == "未配置资格检测代理"
+        row.update({
+            "trial_check_status": "success" if ok else "not_configured" if not_configured else "failed",
+            "trial_check_completed_at": _now(),
+            "trial_check_checked_at": result.get("checked_at") or _now(),
+            "trial_zero_trial_eligible": result.get("trial_zero_trial_eligible") if ok else None,
+            "trial_label": "0元试用" if result.get("trial_zero_trial_eligible") else ("无0元试用" if ok else "未配置检测代理" if not_configured else "检测失败"),
+            "trial_check_error": "" if ok or not_configured else str(result.get("error") or "资格检测失败")[:500],
+            "trial_check_proxy_country": str(result.get("trial_proxy_country") or row.get("trial_check_proxy_country") or "").upper(),
+            "trial_check_proxy_exit_ip": str(result.get("trial_proxy_exit_ip") or ""),
+            "trial_check_proxy_display": str(result.get("trial_proxy_display") or row.get("trial_check_proxy_display") or ""),
+            "trial_offer_kind": str(result.get("plus_trial_offer_kind") or ""),
+            "trial_offer_label": str(result.get("plus_trial_offer_label") or ""),
+            "updated_at": _now(),
+        })
+        _write(_ACCOUNTS, accounts)
+        return _public_account(row)
 
 
 def import_proxies(text: str) -> dict:
@@ -1089,6 +1246,10 @@ def finish_access_token_refresh(account_id: int, result: dict) -> dict | None:
             "access_token": access_token, "at_refresh_status": "success",
             "at_token_changed": token_changed,
             "at_refreshed_at": now, "at_saved_at": now,
+            "trial_check_status": "not_configured",
+            "trial_zero_trial_eligible": None,
+            "trial_label": "未配置检测代理",
+            "trial_check_error": "",
             "updated_at": now,
         })
         if "roxy_browser_status" in result:
@@ -1360,6 +1521,10 @@ def finish_success(task_id: int, result: dict) -> None:
             "at_saved_at": now,
             "at_refresh_status": "success", "roxy_profile_id": profile_id,
             "roxy_browser_status": browser_status,
+            "trial_check_status": "not_configured",
+            "trial_zero_trial_eligible": None,
+            "trial_label": "未配置检测代理",
+            "trial_check_error": "",
             "protocol_engine": task["protocol_engine"],
             "protocol_upstream_commit": task["protocol_upstream_commit"],
             "roxy_open_requested": task["roxy_open_requested"],
