@@ -59,10 +59,10 @@ def test_worker_dispatches_browser_mode_to_restored_flow(tmp_path):
         store.import_proxies("http://proxy.example:8080")
         task = store.reserve_batch(rebind_mode="browser")[0]
         worker._run(task["id"])
-    assert store.list_accounts()[0]["status"] == "success"
-    browser.assert_called_once()
-    assert browser.call_args.kwargs["auth_method"] == "password_totp"
-    protocol.assert_not_called()
+        assert store.list_accounts()[0]["status"] == "success"
+        browser.assert_called_once()
+        assert browser.call_args.kwargs["auth_method"] == "password_totp"
+        protocol.assert_not_called()
 
 
 def test_password_totp_stays_on_totp_after_auth_rerender():

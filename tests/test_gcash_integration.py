@@ -39,6 +39,7 @@ class GCashIntegrationTests(unittest.TestCase):
         self.assertIn("document.body.classList.toggle('gcash-only'", script)
         self.assertIn('.gcash-only main>header', css)
         self.assertIn("frame.dataset.src", script)
+        self.assertIn("selectionInitialized", script)
         self.assertIn("data-push-gcash", script)
         self.assertIn("pushAccessTokenToGCash", script)
         self.assertIn("pushSelectedAccessTokensToGCash", script)
