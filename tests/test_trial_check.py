@@ -79,6 +79,36 @@ def test_worker_trial_check_persists_result(tmp_path):
     assert account["trial_check_proxy_country"] == "ID"
 
 
+def test_trial_check_rotates_static_proxy_pool(tmp_path):
+    with (
+        patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"),
+        patch.object(store, "_REPLACEMENTS", tmp_path / "替换邮箱.json"),
+        patch.object(store, "_TASKS", tmp_path / "rebind_tasks.json"),
+        patch.object(store, "_PROXIES", tmp_path / "换绑代理.json"),
+        patch.object(store, "_DETECTION_PROXIES", tmp_path / "资格检测代理.json"),
+    ):
+        store.import_source_accounts(
+            "old1@example.com----Password!----JBSWY3DPEHPK3PXP\n"
+            "old2@example.com----Password!----JBSWY3DPEHPK3PXP"
+        )
+        store.import_replacement_emails(
+            "new1@example.com----https://mail.example/1\n"
+            "new2@example.com----https://mail.example/2"
+        )
+        store.import_detection_proxies(
+            "ID|socks5h://one.example:3000\n"
+            "ID|socks5h://two.example:3000"
+        )
+        first, second = store.reserve_batch()
+        store.finish_success(first["id"], {"email": "new1@example.com", "access_token": "at-1"})
+        store.finish_success(second["id"], {"email": "new2@example.com", "access_token": "at-2"})
+
+        claim1 = store.begin_trial_check(first["id"])
+        claim2 = store.begin_trial_check(second["id"])
+
+    assert claim1["proxy"]["proxy_url"] != claim2["proxy"]["proxy_url"]
+
+
 def test_refreshing_at_resets_trial_state_for_followup_auto_check(tmp_path):
     with patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"):
         row = {

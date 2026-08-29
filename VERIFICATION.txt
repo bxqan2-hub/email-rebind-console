@@ -1,0 +1,24 @@
+Changed branch/field: store.begin_trial_check proxy selection now rotates available qualification proxies using check_count/last_used_at/id; this prevents row-1 exit affinity from masking an eligible ID trial campaign.
+
+Artifacts:
+- MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\MODIFIED_FILE
+- DIFF_FILE: C:\Users\Administrator\Desktop\email-rebind-console\DIFF_FILE
+- VERIFICATION.txt: C:\Users\Administrator\Desktop\email-rebind-console\VERIFICATION.txt
+- ROLLBACK.sh: C:\Users\Administrator\Desktop\email-rebind-console\ROLLBACK.sh
+
+BASELINE command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
+BASELINE input: repository HEAD before store.py/test_trial_check.py edits
+BASELINE literal result: 108 passed, 5 subtests passed in 5.15s
+BASELINE exit status: 0
+
+MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
+MODIFIED input: working tree with proxy rotation change and regression test
+MODIFIED literal result: 109 passed, 5 subtests passed in 5.19s
+MODIFIED exit status: 0
+
+ROLLBACK command: bash ROLLBACK.sh <temp-copy> <baseline-copy>
+ROLLBACK input: temp copy of MODIFIED_FILE and store.py from git HEAD
+ROLLBACK literal result: rollback restored <temp-copy> from <baseline-copy>; byte comparison matched baseline
+ROLLBACK exit status: 0
+
+Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed store.py copy.
