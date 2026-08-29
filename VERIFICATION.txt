@@ -1,4 +1,4 @@
-Changed branch/field: trial_check.check_zero_trial now performs one request cycle per proxy (max_attempts=1); worker moves transient failures to another proxy and caps the account at five proxies; startup recovery releases queued/running trial checks left by an interrupted process.
+Changed branch/field: store.finish_trial_check now persists has_active_plus_subscription as plus_active and the detected plan as plus_plan; the success-account qualification cell displays “Plus已开通” and the plan, while retaining trial status.
 
 Artifacts:
 - MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\MODIFIED_FILE
@@ -7,18 +7,18 @@ Artifacts:
 - ROLLBACK.sh: C:\Users\Administrator\Desktop\email-rebind-console\ROLLBACK.sh
 
 BASELINE command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-BASELINE input: commit 371fbf5 before bounded per-proxy request/recovery edits
-BASELINE literal result: 112 passed, 5 subtests passed in 5.22s
+BASELINE input: commit 088a54e before Plus display edits
+BASELINE literal result: 114 passed, 5 subtests passed in 5.18s
 BASELINE exit status: 0
 
 MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-MODIFIED input: working tree with max_attempts=1, transient proxy switching, and interrupted-check recovery
-MODIFIED literal result: 114 passed, 5 subtests passed in 5.18s
+MODIFIED input: working tree with Plus persistence/display and regression assertion
+MODIFIED literal result: 114 passed, 5 subtests passed in 5.22s
 MODIFIED exit status: 0
 
 ROLLBACK command: bash ROLLBACK.sh verification/rollback_tmp/target verification/rollback_tmp/baseline
-ROLLBACK input: temporary copy of MODIFIED_FILE and trial_check.py from commit 371fbf5
+ROLLBACK input: temporary copy of MODIFIED_FILE and store.py from commit 088a54e
 ROLLBACK literal result: rollback restored verification/rollback_tmp/target from verification/rollback_tmp/baseline; SHA256 byte comparison matched
 ROLLBACK exit status: 0
 
-Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed trial_check.py copy.
+Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed store.py copy.

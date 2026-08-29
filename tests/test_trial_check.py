@@ -56,6 +56,7 @@ def test_worker_trial_check_persists_result(tmp_path):
         patch.object(worker.trial_check, "check_zero_trial", return_value={
             "ok": True, "checked_at": "2026-08-29T12:00:00", "trial_zero_trial_eligible": True,
             "trial_proxy_country": "ID", "plus_trial_offer_kind": "free_trial",
+            "has_active_plus_subscription": True, "current_plan_type": "plus",
         }),
     ):
         store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
@@ -78,6 +79,8 @@ def test_worker_trial_check_persists_result(tmp_path):
     assert result["accepted"] is True
     assert account["trial_zero_trial_eligible"] is True
     assert account["trial_check_proxy_country"] == "ID"
+    assert account["plus_active"] is True
+    assert account["plus_plan"] == "plus"
 
 
 def test_trial_check_rotates_static_proxy_pool(tmp_path):

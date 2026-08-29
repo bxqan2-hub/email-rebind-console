@@ -249,7 +249,7 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="selectSuccessAllTable"', html)
         self.assertIn('id="copySelectedAT"', html)
         self.assertIn('id="copySuccessResultsBottom"', html)
-        self.assertIn('>资格</th>', html)
+        self.assertIn('>资格 / 套餐</th>', html)
         self.assertIn('id="detectionProxyImport"', html)
         self.assertIn('id="importDetectionProxies"', html)
         self.assertIn('id="checkAllTrials"', html)

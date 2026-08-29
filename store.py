@@ -371,6 +371,8 @@ def finish_trial_check(account_id: int, result: dict) -> dict | None:
             "trial_check_proxy_display": str(result.get("trial_proxy_display") or row.get("trial_check_proxy_display") or ""),
             "trial_offer_kind": str(result.get("plus_trial_offer_kind") or ""),
             "trial_offer_label": str(result.get("plus_trial_offer_label") or ""),
+            "plus_active": result.get("has_active_plus_subscription") if ok else None,
+            "plus_plan": str(result.get("current_plan_type") or result.get("subscription_plan") or "") if ok else "",
             "updated_at": _now(),
         })
         _write(_ACCOUNTS, accounts)
