@@ -1,11 +1,11 @@
-UI result display optimization verification
-=========================================
+AT qualification detection proxy delete verification
+===============================================
 
 Changed branch/field
 --------------------
-- Completion result panel now has `resultVisibleRows` (1-100, default 10).
-- `renderRecent()` uses the configured limit instead of the hard-coded five/eight-row window and persists the value in localStorage key `email-rebind:result-visible-rows`.
-- Result rows are kept in a scrollable panel (`result-task-list`) so completed accounts remain reachable when several accounts run together.
+- Added `DELETE /api/detection-proxies/<proxy_id>` with not-found and active-check responses.
+- Added a detection-proxy table with masked proxy, country, status, last exit/check, and a per-row 删除 button.
+- Delete is disabled/rejected while a running or queued account qualification check is using that proxy.
 
 Artifacts
 ---------
@@ -17,28 +17,29 @@ Artifacts
 BASELINE
 --------
 Command: `$env:PYTHONPATH='.'; pytest -q tests`
-Input: repository at commit 1e1a689 before UI result-display changes.
+Input: repository at commit 239c0ac before detection-proxy delete changes.
 Literal output/result:
-`106 passed, 5 subtests passed in 5.09s`
+`106 passed, 5 subtests passed in 5.21s`
 Exit status: 0
-Original static/app.js SHA256: `35875D0092FF24418CEBE3A702BB22BF53B697386CDF07CCDCB86BE3C3CB3FAE`
+Original store.py SHA256: `51FB75A1DD8C6B8AC9AFF442D1C3C6C98DF0C124AD725053BE14A322584CA2FC`
 
 MODIFIED
 --------
-Command: `$env:PYTHONPATH='.'; pytest -q tests; node --check static/app.js`
-Input: modified working tree with resultVisibleRows control and result-task-list scrolling.
+Command: `$env:PYTHONPATH='.'; py -3 -m pytest -q tests`
+Input: modified working tree with detection-proxy table, delete route, and active-check guard.
 Literal output/result:
-`106 passed, 5 subtests passed in 5.16s`
-`node --check static/app.js` produced no output.
+`107 passed, 5 subtests passed in 5.10s`
+Command: `node --check static/app.js`
+Literal output/result: no output.
 Exit status: 0
-Modified static/app.js SHA256: `9A54AAE9B49B0A14B8CCB1758F50B2C887ECC15588EDC842ED333A317883048B`
+Modified store.py SHA256: `93DD8DA21FE5D3F397F8DC3457157F850FC7FDCE043A107DB08C392AB6535A03`
 
 ROLLBACK
 --------
-Command: `& 'C:\Program Files\Git\bin\bash.exe' verification/ROLLBACK.sh verification/rollback-input.js verification/ui_baseline_app.js`
-Input: a separate copy at `verification/rollback-input.js` containing MODIFIED_FILE.
+Command: `& 'C:\Program Files\Git\bin\bash.exe' verification/ROLLBACK.sh verification/rollback-input-store.py verification/ui_baseline_store.py`
+Input: a separate copy at `verification/rollback-input-store.py` containing MODIFIED_FILE.
 Literal output/result:
-`ROLLBACK_TARGET=verification/rollback-input.js`
-`RESTORED_HASH=35875d0092ff24418cebe3a702bb22bf53b697386cdf07ccdcb86be3c3cb3fae`
+`ROLLBACK_TARGET=verification/rollback-input-store.py`
+`RESTORED_HASH=51fb75a1dd8c6b8ac9aff442d1c3c6c98df0c124ad725053be14a322584ca2fc`
 Exit status: 0
 Restored behavior/status: separate copy hash matches the preserved baseline; MODIFIED_FILE and live source remain on the changed branch.

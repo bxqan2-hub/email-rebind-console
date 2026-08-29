@@ -215,30 +215,6 @@ def list_detection_proxies() -> list[dict]:
         return [_public_detection_proxy(row) for row in sorted(_read(_DETECTION_PROXIES), key=lambda item: int(item.get("id") or 0))]
 
 
-def delete_detection_proxy(proxy_id: int) -> dict:
-    """Delete a qualification-check proxy unless an account is actively using it."""
-    with _LOCK:
-        rows = _read(_DETECTION_PROXIES)
-        row = next((item for item in rows if int(item.get("id") or 0) == int(proxy_id)), None)
-        if row is None:
-            return {"deleted": False, "reason": "not_found"}
-        accounts = _read(_ACCOUNTS)
-        active = next((
-            account for account in accounts
-            if str(account.get("trial_check_status") or "") in {"queued", "running"}
-            and int(account.get("trial_check_proxy_id") or 0) == int(proxy_id)
-        ), None)
-        if active is not None:
-            return {
-                "deleted": False,
-                "reason": "active_check",
-                "account_id": int(active.get("id") or 0),
-            }
-        rows = [item for item in rows if int(item.get("id") or 0) != int(proxy_id)]
-        _write(_DETECTION_PROXIES, rows)
-        return {"deleted": True, "item": _public_detection_proxy(row)}
-
-
 def pick_detection_proxy() -> dict | None:
     with _LOCK:
         rows = _read(_DETECTION_PROXIES)

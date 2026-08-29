@@ -154,6 +154,19 @@ def create_app(*, recover: bool = True) -> Flask:
             return jsonify({"ok": False, "error": "未识别到检测代理格式：ID|代理地址，或直接填写代理地址", **result}), 400
         return jsonify({"ok": True, **result})
 
+    @app.delete("/api/detection-proxies/<int:proxy_id>")
+    def api_delete_detection_proxy(proxy_id: int):
+        result = store.delete_detection_proxy(proxy_id)
+        if result.get("deleted"):
+            return jsonify({"ok": True, **result})
+        if result.get("reason") == "not_found":
+            return jsonify({"ok": False, "error": "检测代理不存在", **result}), 404
+        return jsonify({
+            "ok": False,
+            "error": f"检测代理正在被账号 #{int(result.get('account_id') or 0)} 使用，请等待检测结束后再删除",
+            **result,
+        }), 409
+
     @app.post("/api/accounts/check-trial")
     def api_check_all_trials():
         accepted = []

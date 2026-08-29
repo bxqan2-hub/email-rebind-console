@@ -106,3 +106,30 @@ def test_detection_proxy_import_route_and_state(tmp_path):
     assert response.status_code == 200
     assert state["detection_proxies"][0]["country"] == "ID"
     assert "secret" not in state["detection_proxies"][0]["display"]
+
+
+def test_detection_proxy_delete_route_removes_proxy_and_blocks_active_check(tmp_path):
+    with (
+        patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"),
+        patch.object(store, "_DETECTION_PROXIES", tmp_path / "资格检测代理.json"),
+    ):
+        store.import_detection_proxies("ID|socks5h://proxy.example:3000")
+        client = app.create_app(recover=False).test_client()
+        proxy_id = store.list_detection_proxies()[0]["id"]
+
+        deleted = client.delete(f"/api/detection-proxies/{proxy_id}")
+        assert deleted.status_code == 200
+        assert deleted.get_json()["deleted"] is True
+        assert store.list_detection_proxies() == []
+        assert client.delete(f"/api/detection-proxies/{proxy_id}").status_code == 404
+
+        store.import_detection_proxies("ID|socks5h://proxy.example:3000")
+        proxy_id = store.list_detection_proxies()[0]["id"]
+        store._write(store._ACCOUNTS, [{
+            "id": 7, "status": "success", "trial_check_status": "running",
+            "trial_check_proxy_id": proxy_id,
+        }])
+        blocked = client.delete(f"/api/detection-proxies/{proxy_id}")
+
+    assert blocked.status_code == 409
+    assert blocked.get_json()["reason"] == "active_check"

@@ -4,7 +4,7 @@
 
 .gcash-shell{padding:0;overflow:hidden}.gcash-shell iframe{display:block;width:100%;height:calc(100vh - 100px);min-height:680px;border:0;background:#f7f7fa}
 .result-footer{display:flex;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--line)}
-.proxy-summary{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#f8fafc;color:var(--muted);font-size:12px}.proxy-pool-table{max-height:480px;overflow-y:auto}.proxy-pool-table thead th{position:sticky;top:0;z-index:1}
+.proxy-summary{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#f8fafc;color:var(--muted);font-size:12px}.detection-proxy-table{max-height:360px;overflow-y:auto;margin-top:12px}.detection-proxy-table thead th{position:sticky;top:0;z-index:1}.proxy-pool-table{max-height:480px;overflow-y:auto}.proxy-pool-table thead th{position:sticky;top:0;z-index:1}
 .pairing-table{max-height:524px;overflow-y:auto}.pairing-table thead th{position:sticky;top:0;z-index:1}
 .gcash-only main{padding:0;max-width:none}.gcash-only main>header,.gcash-only main>.stats,.gcash-only main>.eligibility-note,.gcash-only main>.logic-note{display:none}.gcash-only .gcash-shell{height:100vh;border:0;border-radius:0}.gcash-only .gcash-shell iframe{height:100vh}
 
