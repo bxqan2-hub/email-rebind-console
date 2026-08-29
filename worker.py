@@ -18,7 +18,7 @@ _LOCK = threading.RLock()
 _EXECUTORS: list[ThreadPoolExecutor] = []
 _ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-action")
 _TRIAL_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-trial")
-_TRIAL_PROXY_RETRIES = 8
+_TRIAL_PROXY_RETRIES = 5
 
 
 _TRANSIENT_STAGES = {

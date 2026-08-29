@@ -141,6 +141,32 @@ def test_worker_retries_another_proxy_after_no_trial_result(tmp_path):
     assert account["trial_zero_trial_eligible"] is True
 
 
+def test_successful_trial_proxy_is_preferred_for_next_account(tmp_path):
+    with (
+        patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"),
+        patch.object(store, "_DETECTION_PROXIES", tmp_path / "资格检测代理.json"),
+    ):
+        store._write(store._ACCOUNTS, [{"id": 1, "status": "success", "access_token": "at"}])
+        store.import_detection_proxies(
+            "ID|socks5h://one.example:3000\nID|socks5h://two.example:3000"
+        )
+        rows = store._read(store._DETECTION_PROXIES)
+        store.mark_detection_proxy_result(rows[1]["id"], {
+            "ok": True,
+            "checked_at": "2026-08-29T12:00:00",
+            "trial_zero_trial_eligible": True,
+        })
+        claim = store.begin_trial_check(1)
+        public_rows = store.list_detection_proxies()
+
+    assert claim["proxy"]["id"] == rows[1]["id"]
+    assert public_rows[1]["trial_eligible"] is True
+
+
+def test_trial_proxy_retry_limit_is_five():
+    assert worker._TRIAL_PROXY_RETRIES == 5
+
+
 def test_refreshing_at_resets_trial_state_for_followup_auto_check(tmp_path):
     with patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"):
         row = {

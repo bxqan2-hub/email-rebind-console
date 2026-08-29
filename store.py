@@ -300,6 +300,10 @@ def mark_detection_proxy_result(proxy_id: int, result: dict) -> None:
         row["last_check_at"] = result.get("checked_at") or now
         row["last_error"] = str(result.get("error") or "")[:500]
         row["check_count"] = int(row.get("check_count") or 0) + 1
+        if result.get("trial_zero_trial_eligible") is True:
+            row["trial_eligible"] = True
+            row["trial_success_count"] = int(row.get("trial_success_count") or 0) + 1
+            row["trial_last_success_at"] = result.get("checked_at") or now
         row["updated_at"] = now
         _write(_DETECTION_PROXIES, rows)
 
@@ -322,6 +326,7 @@ def begin_trial_check(account_id: int) -> dict | None:
         proxy = min(
             candidates,
             key=lambda item: (
+                0 if item.get("trial_eligible") is True else 1,
                 int(item.get("check_count") or 0),
                 str(item.get("last_used_at") or ""),
                 int(item.get("id") or 0),
