@@ -619,6 +619,7 @@ def reserve_batch(
     *,
     max_transient_retries: int | None = None,
     open_roxy_after: bool = False,
+    rebind_mode: str = "protocol",
 ) -> list[dict]:
     pairs = preview_pairs(account_ids)
     if not pairs:
@@ -647,8 +648,9 @@ def reserve_batch(
                 "status": "queued",
                 "stage": "queued",
                 "attempt": 1,
-                "message": "已完成一对一占用，等待纯协议换绑",
+                "message": "已完成一对一占用，等待浏览器换绑" if rebind_mode == "browser" else "已完成一对一占用，等待纯协议换绑",
                 "open_roxy_after": bool(open_roxy_after),
+                "rebind_mode": "browser" if rebind_mode == "browser" else "protocol",
                 "created_at": now,
             }
             if max_transient_retries is not None:
@@ -725,6 +727,7 @@ def reserve_failed_account_retry(
             previous["manual_retry_task_id"] = task["id"]
             previous["updated_at"] = now
             task["open_roxy_after"] = bool(previous.get("open_roxy_after"))
+            task["rebind_mode"] = str(previous.get("rebind_mode") or "protocol")
         tasks.append(task)
         previous_error = str(account.get("error") or "").strip()
         account.update({"status": "queued", "active_task_id": task["id"], "updated_at": now})
@@ -1479,6 +1482,7 @@ def retry_transient_failure(task_id: int, error: str, max_retries: int) -> dict:
             "transient_retry_count": next_count,
             "message": f"第 {next_attempt} 次尝试：临时故障自动重试，继续使用当前替换邮箱",
             "open_roxy_after": bool(previous.get("open_roxy_after")),
+            "rebind_mode": str(previous.get("rebind_mode") or "protocol"),
             "created_at": now, "updated_at": now,
         }
         if previous.get("max_transient_retries") is not None:

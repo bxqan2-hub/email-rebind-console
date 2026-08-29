@@ -68,3 +68,12 @@ second proxy and calls the existing Roxy replacement-email login extension.
 Failure of that optional extension does not repeat or roll back an already
 confirmed email change. The previous Roxy/HAR email-change entrypoint and its
 email-change helpers are removed; Roxy contains only this post-success extension.
+
+The explicit **打开浏览器换绑** mode restores the last complete browser flow from
+the console history at commit `65114c4bdab08ba85acc246500b87664cf064df5`. Its
+complete implementation is copied to `roxy_browser_rebind.py`; it creates a Roxy
+profile, logs into the original mailbox, performs the same-origin HAR-guided
+email change, logs into the replacement mailbox, obtains the new access token,
+and retains the successful browser session. The default **开始纯协议换绑** mode
+continues to use `protocol_flow.py`; the browser flow is selected only when the
+new button sends `rebind_mode=browser`.

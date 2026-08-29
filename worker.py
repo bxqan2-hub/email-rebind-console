@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import roxy_flow
+import roxy_browser_rebind as browser_rebind
 import protocol_flow
 import settings
 import store
@@ -267,6 +268,21 @@ def _run(task_id: int) -> None:
                     totp_secret=str(account.get("totp_secret") or ""),
                     api_url=str(replacement.get("api_url") or ""),
                     auth_method=str(account.get("auth_method") or ""),
+                    proxy_url=str(active_proxy.get("proxy_url") or ""),
+                    progress=progress,
+                    proxy_verified=proxy_verified,
+                    max_relogin_retries=retry_limit,
+                    stop_check=stop_check,
+                )
+            elif str(task.get("rebind_mode") or "protocol") == "browser":
+                result = browser_rebind.perform_email_rebind(
+                    old_email=str(account.get("old_email") or ""),
+                    new_email=str(replacement.get("email") or ""),
+                    password=str(account.get("password") or ""),
+                    totp_secret=str(account.get("totp_secret") or ""),
+                    source_api_url=str(account.get("api_url") or ""),
+                    auth_method=str(account.get("auth_method") or ""),
+                    api_url=str(replacement.get("api_url") or ""),
                     proxy_url=str(active_proxy.get("proxy_url") or ""),
                     progress=progress,
                     proxy_verified=proxy_verified,

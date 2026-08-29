@@ -235,6 +235,11 @@ def create_app(*, recover: bool = True) -> Flask:
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "自动重试次数必须是 0~10 的整数"}), 400
         open_roxy_after = bool(data.get("open_roxy_after"))
+        rebind_mode = str(data.get("rebind_mode") or "protocol").strip().lower()
+        if rebind_mode not in {"protocol", "browser"}:
+            return jsonify({"ok": False, "error": "rebind_mode 必须是 protocol 或 browser"}), 400
+        if rebind_mode == "browser":
+            open_roxy_after = False
         required_proxies = 2 if open_roxy_after else 1
         if int(store.summary().get("proxy_available") or 0) < required_proxies:
             if open_roxy_after:
@@ -246,6 +251,7 @@ def create_app(*, recover: bool = True) -> Flask:
         tasks = store.reserve_batch(
             ids, max_transient_retries=transient_retries,
             open_roxy_after=open_roxy_after,
+            rebind_mode=rebind_mode,
         )
         if not tasks:
             return jsonify({"ok": False, "error": "没有可一对一配对的待换绑账号和替换邮箱"}), 409
@@ -254,6 +260,7 @@ def create_app(*, recover: bool = True) -> Flask:
             "ok": True, "submitted": submitted, "workers": workers,
             "transient_retries": transient_retries,
             "open_roxy_after": open_roxy_after, "tasks": tasks,
+            "rebind_mode": rebind_mode,
         })
 
     @app.post("/api/accounts/<int:account_id>/retry")
