@@ -18,6 +18,7 @@ _LOCK = threading.RLock()
 _EXECUTORS: list[ThreadPoolExecutor] = []
 _ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-action")
 _TRIAL_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-trial")
+_TRIAL_PROXY_RETRIES = 8
 
 
 _TRANSIENT_STAGES = {
@@ -114,16 +115,27 @@ def submit_trial_check(account_id: int) -> dict:
     # begin_trial_check marks it running; hand the captured context directly to
     # avoid claiming the same account a second time inside the worker.
     def run_captured() -> None:
-        proxy = current["proxy"]
-        try:
-            result = trial_check.check_zero_trial(
-                current["access_token"],
-                f'{proxy.get("country") or ""}|{proxy.get("proxy_url") or ""}',
-            )
-        except Exception as exc:
-            result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}", "trial_proxy_country": str(proxy.get("country") or "").upper()}
-        store.finish_trial_check(account_id, result)
-        store.mark_detection_proxy_result(int(proxy.get("id") or 0), result)
+        claim = current
+        proxy = claim["proxy"]
+        for attempt in range(_TRIAL_PROXY_RETRIES):
+            try:
+                result = trial_check.check_zero_trial(
+                    claim["access_token"],
+                    f'{proxy.get("country") or ""}|{proxy.get("proxy_url") or ""}',
+                )
+            except Exception as exc:
+                result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}", "trial_proxy_country": str(proxy.get("country") or "").upper()}
+            store.finish_trial_check(account_id, result)
+            store.mark_detection_proxy_result(int(proxy.get("id") or 0), result)
+            if not result.get("ok") or result.get("trial_zero_trial_eligible") is True:
+                break
+            # A successful API response without a promotion can be exit-IP
+            # specific. Try another static ID proxy before declaring no trial.
+            next_claim = store.begin_trial_check(account_id)
+            if not next_claim:
+                break
+            claim = next_claim
+            proxy = claim["proxy"]
     try:
         _TRIAL_EXECUTOR.submit(run_captured)
     except Exception as exc:

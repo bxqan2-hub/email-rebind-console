@@ -109,6 +109,38 @@ def test_trial_check_rotates_static_proxy_pool(tmp_path):
     assert claim1["proxy"]["proxy_url"] != claim2["proxy"]["proxy_url"]
 
 
+def test_worker_retries_another_proxy_after_no_trial_result(tmp_path):
+    with (
+        patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"),
+        patch.object(store, "_REPLACEMENTS", tmp_path / "替换邮箱.json"),
+        patch.object(store, "_TASKS", tmp_path / "rebind_tasks.json"),
+        patch.object(store, "_PROXIES", tmp_path / "换绑代理.json"),
+        patch.object(store, "_DETECTION_PROXIES", tmp_path / "资格检测代理.json"),
+        patch.object(worker.trial_check, "check_zero_trial", side_effect=[
+            {"ok": True, "trial_zero_trial_eligible": False, "plus_trial_offer_kind": "none"},
+            {"ok": True, "trial_zero_trial_eligible": True, "plus_trial_offer_kind": "free_trial"},
+        ]) as check,
+    ):
+        store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+        store.import_replacement_emails("new@example.com----https://mail.example/code")
+        store.import_detection_proxies(
+            "ID|socks5h://one.example:3000\nID|socks5h://two.example:3000"
+        )
+        task = store.reserve_batch()[0]
+        store.finish_success(task["id"], {"email": "new@example.com", "access_token": "at-new"})
+        worker.submit_trial_check(1)
+
+        import time
+        for _ in range(50):
+            account = store.get_success_account_context(1)
+            if account and account.get("trial_zero_trial_eligible") is True:
+                break
+            time.sleep(0.02)
+
+    assert check.call_count == 2
+    assert account["trial_zero_trial_eligible"] is True
+
+
 def test_refreshing_at_resets_trial_state_for_followup_auto_check(tmp_path):
     with patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"):
         row = {

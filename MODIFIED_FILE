@@ -1,94 +1,475 @@
-const $ = s => document.querySelector(s);
-const $$ = s => [...document.querySelectorAll(s)];
-let STATE = {accounts:[], replacements:[], proxies:[], tasks:[], summary:{}};
-let selected = new Set();
-let selectionInitialized = false;
-let selectedSuccessAccounts = new Set();
-let successTrialFilter = 'all';
-let selectedResultTasks = new Set();
-let selectedReplacements = new Set();
-let pairs = [];
-let retrySettingInitialized = false;
-const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-function shortTime(value){const match=String(value||'').match(/[T ](\d{2}:\d{2})/);return match?match[1]:'-'}
-function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),2200)}
-async function api(url, options={}){const response=await fetch(url, options);const data=await response.json().catch(()=>({}));if(!response.ok||data.ok===false)throw new Error(data.error||`HTTP ${response.status}`);return data}
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-function pill(status){return `<span class="pill ${esc(status)}">${esc(({ready:'待换绑',queued:'排队中',running:'进行中',success:'成功',failed:'不可用/失败',available:'可用',reserved:'已占用',used:'已使用',review:'待人工核验',closed:'已关闭',deleted:'已删除',not_opened:'未打开',open_failed:'打开失败',auto_retry:'自动重试中',transient_failed:'临时失败',stopped:'已停止'})[status]||status||'-')}</span>`}
-function renderStats(){const s=STATE.summary||{};$('#stats').innerHTML=[['已导入账号',s.accounts_total||0],['待换绑',s.accounts_ready||0],['换绑完成',s.accounts_success||0],['保留登录窗口',s.roxy_open||0],['替换邮箱可用',s.replacement_available||0],['换绑代理可用',s.proxy_available||0],['失败代理',s.proxy_failed||0],['邮箱失败/待核验',Number(s.replacement_failed||0)+Number(s.replacement_review||0)],['活动任务',s.tasks_active||0]].map(([k,v])=>`<div class="stat"><span>${k}</span><strong>${v}</strong></div>`).join('')}
-function pairFor(id){return pairs.find(item=>Number(item.account_id)===Number(id))}
-function renderPairs(){const eligible=STATE.accounts.filter(a=>['ready','failed'].includes(a.status));const review=STATE.accounts.filter(a=>a.status==='review');const active=STATE.accounts.filter(a=>['queued','running'].includes(a.status));const body=$('#pairBody');const normal=eligible.map(a=>{const p=pairFor(a.id);const login=a.has_api?'原邮箱 API 取码':'密码 + 2FA';return `<tr><td><input type="checkbox" data-account-id="${a.id}" ${selected.has(Number(a.id))?'checked':''}></td><td><strong>${esc(a.old_email)}</strong><small> · ${esc(login)}</small></td><td>${pill(a.status)}</td><td>${p?`<strong>${esc(p.new_email)}</strong><small> · 替换邮箱 #${p.replacement_id}</small>`:'<span class="pill failed">号池不足</span>'}</td><td><div class="row-actions">${a.status==='failed'?`<button class="btn primary" data-retry-account="${a.id}">失败重试</button>`:''}<button class="btn danger" data-delete-account="${a.id}" data-label="${esc(a.old_email)}">删除</button></div></td></tr>`}).join('');const reviewRows=review.map(a=>`<tr><td>—</td><td><strong>${esc(a.old_email)}</strong><small> · 已换绑邮箱登录</small></td><td>${pill(a.status)}</td><td><strong>${esc(a.current_email||a.new_email||'-')}</strong><small> · 已完成换绑，待获取 AT</small></td><td><div class="row-actions"><button class="btn primary" data-review-login-account="${a.id}">重新登录获取 AT</button><button class="btn danger" data-delete-account="${a.id}" data-label="${esc(a.old_email)}">删除</button></div></td></tr>`).join('');const activeRows=active.map(a=>{const p=pairFor(a.id);return `<tr><td>—</td><td><strong>${esc(a.old_email)}</strong><small> · 进行中</small></td><td>${pill(a.status)}</td><td><strong>${esc(p?.new_email||a.current_email||a.new_email||'-')}</strong></td><td><div class="row-actions"><button class="btn danger" data-stop-account="${a.id}">停止</button></div></td></tr>`}).join('');body.innerHTML=(normal+reviewRows+activeRows)||'<tr><td colspan="5">暂无待换绑账号，请先从“导入原邮箱账号”入口导入。</td></tr>';body.querySelectorAll('[data-account-id]').forEach(el=>el.onchange=()=>{const id=Number(el.dataset.accountId);el.checked?selected.add(id):selected.delete(id);preview()});$('#selectAll').checked=eligible.length>0&&eligible.every(a=>selected.has(Number(a.id)))}
-function renderPool(){const rows=STATE.replacements;const valid=new Set(rows.map(r=>Number(r.id)));selectedReplacements=new Set([...selectedReplacements].filter(id=>valid.has(Number(id))));$('#poolBody').innerHTML=rows.map(r=>{const busy=r.status==='reserved'||STATE.tasks.some(t=>Number(t.replacement_id)===Number(r.id)&&['queued','running'].includes(t.status));return `<tr><td><input type="checkbox" data-replacement-id="${r.id}" ${selectedReplacements.has(Number(r.id))?'checked':''}></td><td>#${r.id}</td><td><strong>${esc(r.email)}</strong></td><td>${r.has_api?'已配置':'缺失'}</td><td>${pill(r.status)}</td><td>${esc(r.bound_old_email||'-')}</td><td class="reason-cell" title="${esc(r.failure_reason||'')}">${esc((r.failure_reason||'-').slice(0,80))}</td><td><div class="row-actions">${r.status==='failed'?`<button class="btn ghost" data-restore-replacement="${r.id}">重新启用</button>`:''}<button class="btn danger" data-delete-replacement="${r.id}" data-label="${esc(r.email)}" ${busy?'disabled title="活动任务正在占用"':''}>删除</button></div></td></tr>`}).join('')||'<tr><td colspan="8">号池为空</td></tr>';$('#poolBody').querySelectorAll('[data-replacement-id]').forEach(el=>el.onchange=()=>{const id=Number(el.dataset.replacementId);el.checked?selectedReplacements.add(id):selectedReplacements.delete(id);renderPool()});const all=rows.length>0&&rows.every(r=>selectedReplacements.has(Number(r.id)));['#selectReplacementAll','#selectReplacementAllTable'].forEach(selector=>{const input=$(selector);if(input)input.checked=all});$('#deleteSelectedReplacements').disabled=!selectedReplacements.size}
-function renderProxyPool(){$('#proxyPoolBody').innerHTML=STATE.proxies.map(r=>{const busy=STATE.tasks.some(t=>Number(t.proxy_id)===Number(r.id)&&['queued','running'].includes(t.status));return `<tr><td>#${r.id}</td><td><strong>${esc(r.display)}</strong></td><td>${pill(r.status)}</td><td>${esc(r.success_count||0)} / ${esc(r.failure_count||0)}</td><td>${esc(r.last_exit_ip||'-')}${r.last_country?` · ${esc(r.last_country)}`:''}</td><td>${esc(r.last_old_email||'-')}</td><td class="reason-cell" title="${esc(r.failure_reason||'')}">${esc((r.failure_reason||'-').slice(0,80))}</td><td><div class="row-actions">${r.status==='failed'?`<button class="btn ghost" data-restore-proxy="${r.id}">重新启用</button>`:''}<button class="btn danger" data-delete-proxy="${r.id}" data-label="${esc(r.display)}" ${busy?'disabled title="活动任务正在使用"':''}>删除</button></div></td></tr>`}).join('')||'<tr><td colspan="8">代理池为空，请先手动导入。</td></tr>'}
-function renderDetectionProxies(){const rows=STATE.detection_proxies||[];const summary=$('#detectionProxySummary');const body=$('#detectionProxyBody');const deleteAll=$('#deleteAllDetectionProxies');if(!summary)return;if(!rows.length){summary.textContent='尚未添加检测代理';if(body)body.innerHTML='<tr><td colspan=6>暂无检测代理，请先导入。</td></tr>';if(deleteAll)deleteAll.disabled=true;return}const groups={};rows.forEach(row=>{const country=String(row.country||row.last_country||'未标注').toUpperCase();groups[country]=(groups[country]||0)+1});summary.textContent=`已添加 ${rows.length} 条检测代理 · 国家：${Object.entries(groups).map(([country,count])=>`${country}（${count}）`).join('、')}`;if(deleteAll)deleteAll.disabled=false;if(!body)return;body.innerHTML=rows.map(row=>{const busy=STATE.accounts.some(account=>['queued','running'].includes(account.trial_check_status)&&Number(account.trial_check_proxy_id)===Number(row.id));const status=row.status==='failed'?'failed':'available';const lastCheck=row.last_check_at||'-';return `<tr><td>#${row.id}</td><td><strong>${esc(row.display||'-')}</strong></td><td>${esc(row.country||row.last_country||'未标注')}</td><td>${pill(status)}</td><td>${esc(row.last_exit_ip||'-')}</td><td>${esc(lastCheck)}${busy?' · 使用中':''}</td></tr>`}).join('')}
-function successAccountRows(){const rows=STATE.accounts.filter(a=>a.status==='success');return successTrialFilter==='trial'?rows.filter(a=>a.trial_check_status==='success'&&a.trial_zero_trial_eligible===true):rows}
-function renderSuccessAccounts(){const rows=successAccountRows();const valid=new Set(rows.map(a=>Number(a.id)));selectedSuccessAccounts=new Set([...selectedSuccessAccounts].filter(id=>valid.has(Number(id))));$('#successAccountsBody').innerHTML=rows.map(a=>{const refreshing=a.at_refresh_status==='running';const closed=a.roxy_browser_status==='closed';const deleted=a.roxy_browser_status==='deleted';const notOpened=a.roxy_browser_status==='not_opened';const openFailed=a.roxy_browser_status==='open_failed';const hasProfile=Boolean(a.roxy_profile_id);const atLabel=refreshing?'获取中':a.at_refresh_status==='failed'?'失败':!a.at_saved?'未保存':a.at_token_changed===true?'已更新':'已保存';const windowState=deleted?'deleted':closed?'closed':openFailed?'open_failed':notOpened?'not_opened':'success';const windowLabel=deleted?'已删除':closed?'已关闭':openFailed?'打开失败':notOpened?'纯协议':'已打开';const closeLabel=deleted?'已删':closed?'删环境':'关闭';return `<tr><td><input type="checkbox" data-success-account-id="${a.id}" ${selectedSuccessAccounts.has(Number(a.id))?'checked':''}></td><td><div class="email-stack"><div><span>原</span><strong>${esc(a.old_email||'-')}</strong></div><div><span>新</span><strong>${esc(a.new_email||a.current_email||'-')}</strong></div></div></td><td>${pill(refreshing?'running':a.at_refresh_status==='failed'?'failed':'success')}<small class="compact-label">${esc(atLabel)}</small>${a.at_refresh_error?`<small class="action-error compact-error" title="${esc(a.at_refresh_error)}">⚠</small>`:''}</td><td title="${esc(a.roxy_open_error||'')}">${pill(windowState)}<small class="compact-label">${esc(windowLabel)}</small>${openFailed?'<small class="action-error compact-error">⚠</small>':''}</td><td><span class="cdp-port">${a.roxy_cdp_port?`<code>${esc(a.roxy_cdp_port)}</code>`:'-'}</span></td><td>${esc(shortTime(a.at_saved_at||a.at_refreshed_at||a.rebound_at))}</td><td><div class="row-actions"><button class="btn ghost" title="复制完整结果" data-copy-export="${a.id}">结果</button><button class="btn primary" title="复制 AT" data-copy-at="${a.id}">AT</button><button class="btn violet" title="推送 AT 到 GCash 提链" data-push-gcash="${a.id}">GCash</button><button class="btn primary" title="检查并更新 AT（Roxy 窗口或纯协议登录）" data-refresh-at="${a.id}" ${refreshing?'disabled':''}>${refreshing?'获取中':'刷新'}</button><button class="btn ghost" title="关闭窗口或删除环境" data-close-roxy="${a.id}" ${refreshing||!hasProfile||deleted?'disabled':''}>${closeLabel}</button><button class="btn danger" title="清理账号" data-delete-success-account="${a.id}" data-label="${esc(a.new_email||a.current_email||a.old_email)}" ${refreshing||hasProfile?'disabled title="请先关闭窗口并删除 Roxy 环境"':''}>清理</button></div></td></tr>`}).join('')||'<tr><td colspan="7">暂无换绑完成账号。</td></tr>';$('#successAccountsBody').querySelectorAll('[data-success-account-id]').forEach(el=>el.onchange=()=>{const id=Number(el.dataset.successAccountId);el.checked?selectedSuccessAccounts.add(id):selectedSuccessAccounts.delete(id);renderSuccessAccounts()});const all=rows.length>0&&rows.every(a=>selectedSuccessAccounts.has(Number(a.id)));['#selectSuccessAll','#selectSuccessAllTable'].forEach(selector=>{const input=$(selector);if(input)input.checked=all});$('#copySelectedAT').disabled=!selectedSuccessAccounts.size;$('#pushSelectedGCash').disabled=!selectedSuccessAccounts.size;$('#cleanupSelectedAccounts').disabled=!selectedSuccessAccounts.size}
-function taskActions(t){const account=STATE.accounts.find(a=>Number(a.id)===Number(t.account_id));const buttons=[];if(['queued','running'].includes(t.status))buttons.push(`<button class="btn danger" data-stop-task="${t.id}">停止</button>`);if(t.stage==='manual_review'&&account?.status==='review')buttons.push(`<button class="btn primary" data-review-login-account="${t.account_id}">重新登录获取 AT</button>`);if(t.status==='failed'&&account?.status==='failed')buttons.push(`<button class="btn primary" data-retry-account="${t.account_id}">失败重试</button>`);if(['success','failed','review','stopped'].includes(t.status))buttons.push(`<button class="btn danger" data-delete-finished-task="${t.id}">清理记录</button>`);return buttons.length?`<div class="row-actions">${buttons.join('')}</div>`:'-'}
-function taskRows(target){target.innerHTML=STATE.tasks.map(t=>`<tr><td>#${t.id}</td><td><strong>${esc(t.old_email)}</strong> → ${esc(t.new_email)}</td><td>${esc(t.proxy_display||'-')}<small>${t.proxy_attempt?` · 第 ${esc(t.proxy_attempt)} 条`:''}</small></td><td>${pill(t.status)}</td><td>第 ${esc(t.attempt||1)} 次 · ${esc(t.stage||'-')}</td><td title="${esc(t.message||'')}">${esc((t.message||'-').slice(0,90))}</td><td>${esc(t.completed_at||'-')}</td><td>${taskActions(t)}</td></tr>`).join('')||'<tr><td colspan="8">暂无任务</td></tr>'}
-function resultVisibleLimit(){const input=$('#resultVisibleRows');const value=Number(input?.value);const rows=Number.isFinite(value)&&value>=1?Math.min(100,Math.floor(value)):10;if(input)input.value=rows;return rows}
-function renderRecent(){const rows=STATE.tasks.slice(0,resultVisibleLimit());const finished=new Set(['success','failed','review','stopped']);const selectable=rows.filter(t=>finished.has(t.status));const valid=new Set(selectable.map(t=>Number(t.id)));selectedResultTasks=new Set([...selectedResultTasks].filter(id=>valid.has(Number(id))));$('#recentTasks').innerHTML=rows.map(t=>{const canSelect=finished.has(t.status);return `<div class="task-row"><div>${canSelect?`<input type="checkbox" data-result-task-id="${t.id}" ${selectedResultTasks.has(Number(t.id))?'checked':''}>`:'-'}</div><strong>#${t.id}</strong><div>${esc(t.old_email)}<br><small>→ ${esc(t.new_email)} · ${esc(t.proxy_display||'待分配代理')}</small></div><div>${pill(t.status)}</div><div>${esc(t.message||t.stage||'-')}</div><div>${['queued','running'].includes(t.status)?`<button class="btn danger" data-stop-task="${t.id}">停止</button>`:canSelect?`<button class="btn danger" data-delete-finished-task="${t.id}">清理记录</button>`:'-'}</div></div>`}).join('')||'<div class="task-row"><small>暂无换绑任务</small></div>';$('#recentTasks').querySelectorAll('[data-result-task-id]').forEach(el=>el.onchange=()=>{const id=Number(el.dataset.resultTaskId);el.checked?selectedResultTasks.add(id):selectedResultTasks.delete(id);renderRecent()});const all=selectable.length>0&&selectable.every(t=>selectedResultTasks.has(Number(t.id)));const selectAll=$('#selectResultAll');if(selectAll)selectAll.checked=all;$('#cleanupSelectedResults').disabled=!selectedResultTasks.size}
-function renderSuccessTrialInfo(){const rows=successAccountRows();const body=$('#successAccountsBody');if(!body)return;if(!rows.length){const empty=body.querySelector('td[colspan]');if(empty)empty.colSpan=8;return}body.querySelectorAll('tr').forEach((row,index)=>{if(row.children.length>=8)return;const account=rows[index];if(!account)return;const status=account.trial_check_status||'not_configured';const pillState=status==='running'?'running':status==='success'?'success':status==='failed'?'failed':'not_opened';const label=status==='running'?'检测中':status==='success'?(account.trial_zero_trial_eligible?'0元试用':'无0元试用'):status==='failed'?'检测失败':'未配置检测代理';const country=account.trial_check_proxy_country?` · ${esc(account.trial_check_proxy_country)}`:'';const cell=document.createElement('td');cell.title=account.trial_check_error||'';cell.innerHTML=`${pill(pillState)}<small class="compact-label">${label}${country}</small>`;row.insertBefore(cell,row.children[4]||null)})}
-function applyPairVisibleLimit(){const input=$('#pairVisibleRows');const wraps=document.querySelectorAll('.pairing-table,.success-table-wrap');if(!input||!wraps.length)return;const value=Number(input.value);if(!Number.isFinite(value)||value<1)return;const rows=Math.max(1,Math.min(100,Math.floor(value)));input.value=rows;wraps.forEach(wrap=>wrap.style.maxHeight=`${rows*48+44}px`);try{localStorage.setItem('email-rebind:pair-visible-rows',String(rows))}catch(_){} }
-function render(){renderStats();renderPairs();renderPool();renderProxyPool();renderDetectionProxies();renderSuccessAccounts();renderSuccessTrialInfo();applyPairVisibleLimit();taskRows($('#taskBody'));renderRecent();$('#clearFinishedTasks').disabled=!STATE.tasks.some(t=>['success','failed','review','stopped'].includes(t.status));$('#deleteAllProxies').disabled=!STATE.proxies.length}
-async function load(){try{STATE=await api('/api/state');const retryInput=$('#transientRetries');if(retryInput&&!retrySettingInitialized&&STATE.settings){retryInput.value=Number(STATE.settings.max_transient_retries??2);retrySettingInitialized=true}const valid=new Set(STATE.accounts.filter(a=>['ready','failed'].includes(a.status)).map(a=>Number(a.id)));if(!selectionInitialized){selected=new Set(valid);selectionInitialized=true}else{selected=new Set([...selected].filter(id=>valid.has(id)))}await preview(false);render()}catch(e){toast('加载失败：'+e.message)}}
-async function preview(doRender=true){try{const r=await api('/api/pairs/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_ids:[...selected]})});pairs=r.pairs||[];if(doRender)renderPairs()}catch(e){toast('配对失败：'+e.message)}}
-async function importText(url, selector){const text=$(selector).value;if(!text.trim())return toast('请先粘贴内容');try{const r=await api(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});$(selector).value='';const skipped=Array.isArray(r.invalid)&&r.invalid.length?`，跳过 ${r.invalid.length}`:'';toast(`识别 ${r.parsed} 行；新增 ${r.inserted}，更新 ${r.updated}${skipped}`);await load()}catch(e){toast(e.message)}}
-$('#importAccounts').onclick=()=>importText('/api/accounts/import','#accountImport');
-$('#importReplacements').onclick=()=>importText('/api/replacements/import','#replacementImport');
-$('#importProxies').onclick=()=>importText('/api/proxies/import','#proxyImport');
-$('#importDetectionProxies').onclick=()=>importText('/api/detection-proxies/import','#detectionProxyImport');
-$('#deleteAllDetectionProxies').onclick=async()=>{const count=STATE.detection_proxies?.length||0;if(!count)return toast('检测代理池为空');if(!confirm(`确定一键删除全部 ${count} 条检测代理？正在检测的代理会保留。`))return;const button=$('#deleteAllDetectionProxies');button.disabled=true;try{const result=await api('/api/detection-proxies',{method:'DELETE'});const skipped=Number(result.skipped_count||0);toast(`已删除 ${Number(result.deleted||0)} 条检测代理${skipped?`，${skipped} 条因检测任务使用而保留`:''}`);await load()}catch(error){toast(error.message)}finally{button.disabled=false}};
-$('#checkAllTrials').onclick=async()=>{const button=$('#checkAllTrials');button.disabled=true;try{const result=await api('/api/accounts/check-trial',{method:'POST'});toast(result.count?`已启动 ${result.count} 个成功账号资格检测`:'没有可检测的成功账号或未配置检测代理');await load()}catch(error){toast(error.message)}finally{button.disabled=false}};
-$('#deleteAllProxies').onclick=async()=>{const count=STATE.proxies.length;if(!count)return toast('代理池为空');if(!confirm(`确定删除全部 ${count} 条换绑代理？活动任务正在使用的代理会保留。`))return;const button=$('#deleteAllProxies');button.disabled=true;try{const r=await api('/api/proxies',{method:'DELETE'});const skipped=Number(r.skipped_count||0);toast(`已删除 ${Number(r.deleted||0)} 条代理${skipped?`，${skipped} 条因活动任务保留`:''}`);await load()}catch(error){toast(error.message)}finally{button.disabled=false}}
-async function retryFailedAccount(button){const id=Number(button.dataset.retryAccount);const retries=Number($('#transientRetries')?.value||0);if(!confirm(`重新执行这个失败账号的换绑任务？本次自动重试 ${retries} 次，并重新占用可用替换邮箱、随机选择代理。`))return;button.disabled=true;try{const r=await api(`/api/accounts/${id}/retry`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transient_retries:retries})});selected.delete(id);toast(`失败重试已提交：任务 #${r.task.id}，自动重试 ${r.transient_retries} 次`);await load()}catch(error){toast(error.message);button.disabled=false}}
-async function retryReviewLoginAccount(button){const id=Number(button.dataset.reviewLoginAccount);const retries=Number($('#transientRetries')?.value||0);if(!confirm(`该账号已完成邮箱换绑，本次只使用替换邮箱重新登录并获取 AT，自动重试 ${retries} 次。确定继续？`))return;button.disabled=true;try{const r=await api(`/api/accounts/${id}/review-login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transient_retries:retries})});toast(`已提交替换邮箱登录补救：任务 #${r.task.id}`);await load()}catch(error){toast(error.message);button.disabled=false}}
-async function stopTask(button){const id=Number(button.dataset.stopTask);if(!confirm(`确定停止任务 #${id}？当前浏览器流程会尽快结束；若服务端已经确认换绑，将转入人工核验。`))return;button.disabled=true;try{const r=await api(`/api/tasks/${id}/stop`,{method:'POST'});toast(r.reason==='already_stopped'?'该任务已经停止':'已请求停止任务，正在关闭当前流程');await load()}catch(error){toast(error.message);button.disabled=false}}
-async function stopAccount(button){const id=Number(button.dataset.stopAccount);if(!confirm(`确定停止账号 #${id}？当前流程将尽快结束。`))return;button.disabled=true;try{await api(`/api/accounts/${id}/stop`,{method:'POST'});toast('已请求停止该账号');await load()}catch(error){toast(error.message);button.disabled=false}}
-async function deleteAccount(button,finished=false){const id=Number(finished?button.dataset.deleteSuccessAccount:button.dataset.deleteAccount);const message=finished?`确定清理已完成账号 ${button.dataset.label}？保存的 AT 和该账号导出结果会从分站删除。`:`确定删除原邮箱账号 ${button.dataset.label}？`;if(!confirm(message))return;button.disabled=true;try{await api(`/api/accounts/${id}`,{method:'DELETE'});selected.delete(id);toast(finished?'完成账号已清理':'原邮箱账号已删除');await load()}catch(error){toast(error.message);button.disabled=false}}
-$('#pairBody').onclick=async e=>{const stop=e.target.closest('[data-stop-account]');if(stop){await stopAccount(stop);return}const review=e.target.closest('[data-review-login-account]');if(review){await retryReviewLoginAccount(review);return}const retry=e.target.closest('[data-retry-account]');if(retry){await retryFailedAccount(retry);return}const remove=e.target.closest('[data-delete-account]');if(remove)await deleteAccount(remove)};
-$('#poolBody').onclick=async e=>{const restore=e.target.closest('[data-restore-replacement]');if(restore){restore.disabled=true;try{await api(`/api/replacements/${restore.dataset.restoreReplacement}/restore`,{method:'POST'});toast('失败邮箱已重新启用');await load()}catch(error){toast(error.message)}finally{restore.disabled=false}return}const remove=e.target.closest('[data-delete-replacement]');if(!remove||!confirm(`确定从替换邮箱号池删除 ${remove.dataset.label}？任务历史和已完成账号不会删除。`))return;remove.disabled=true;try{await api(`/api/replacements/${remove.dataset.deleteReplacement}`,{method:'DELETE'});toast('替换邮箱已删除');await load()}catch(error){toast(error.message);remove.disabled=false}};
-$('#proxyPoolBody').onclick=async e=>{const restore=e.target.closest('[data-restore-proxy]');if(restore){restore.disabled=true;try{await api(`/api/proxies/${restore.dataset.restoreProxy}/restore`,{method:'POST'});toast('失败代理已重新启用');await load()}catch(error){toast(error.message)}finally{restore.disabled=false}return}const remove=e.target.closest('[data-delete-proxy]');if(!remove||!confirm(`确定从换绑代理池删除 ${remove.dataset.label}？已有任务历史不会删除。`))return;remove.disabled=true;try{await api(`/api/proxies/${remove.dataset.deleteProxy}`,{method:'DELETE'});toast('代理已删除');await load()}catch(error){toast(error.message);remove.disabled=false}};
-async function fetchText(url,emptyMessage){const response=await fetch(url,{cache:'no-store'});if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error||`读取失败：HTTP ${response.status}`)}const text=await response.text();if(!text.trim())throw new Error(emptyMessage);return text}
-async function copyText(text){if(navigator.clipboard?.writeText){try{await navigator.clipboard.writeText(text);return}catch(_){}}const area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();const copied=document.execCommand('copy');area.remove();if(!copied)throw new Error('浏览器复制失败，请允许剪贴板权限后重试')}
-async function copyExport(url){await copyText(await fetchText(url,'暂无完成结果'))}
-async function copyAccessToken(accountId){await copyText((await fetchText(`/api/accounts/${accountId}/access-token`,'该账号暂无 AT')).trim())}
-function waitForGCashFrame(frame){if(frame.dataset.loaded==='1')return Promise.resolve();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('GCash 提链界面加载超时')),10000);frame.addEventListener('load',()=>{clearTimeout(timer);frame.dataset.loaded='1';resolve()},{once:true});if(!frame.getAttribute('src'))frame.src=frame.dataset.src})}
-async function pushAccessTokenToGCash(accountId){const account=STATE.accounts.find(item=>Number(item.id)===Number(accountId));const token=(await fetchText(`/api/accounts/${accountId}/access-token`,'该账号暂无 AT')).trim();const nav=document.querySelector('[data-view="gcash"]');const frame=$('#gcashFrame');if(!nav||!frame)throw new Error('GCash 提链界面未加载');nav.click();await waitForGCashFrame(frame);const targetOrigin=new URL(frame.dataset.src,location.href).origin;frame.contentWindow.postMessage({type:'email-rebind:push-at',accessToken:token,email:account?.new_email||account?.current_email||account?.old_email||''},targetOrigin);toast('已跳转 GCash 提链并自动填入 AT')}
-async function pushSelectedAccessTokensToGCash(){const ids=[...selectedSuccessAccounts];if(!ids.length)return toast('请先选择成功账号');const results=await Promise.allSettled(ids.map(async id=>{const account=STATE.accounts.find(item=>Number(item.id)===Number(id));const accessToken=(await fetchText(`/api/accounts/${id}/access-token`,'该账号暂无 AT')).trim();return {accessToken,email:account?.new_email||account?.current_email||account?.old_email||''}}));const accounts=results.filter(item=>item.status==='fulfilled'&&item.value.accessToken).map(item=>item.value);if(!accounts.length)return toast('所选账号没有可推送的 AT');const nav=document.querySelector('[data-view="gcash"]');const frame=$('#gcashFrame');if(!nav||!frame)throw new Error('GCash 提链界面未加载');nav.click();await waitForGCashFrame(frame);const targetOrigin=new URL(frame.dataset.src,location.href).origin;frame.contentWindow.postMessage({type:'email-rebind:push-at',accounts},targetOrigin);toast(`已推送 ${accounts.length} 个 AT 到 GCash${accounts.length<ids.length?`，${ids.length-accounts.length} 个读取失败`:''}`)}
-async function copySelectedAccessTokens(){const ids=[...selectedSuccessAccounts];if(!ids.length)return toast('请先选择成功账号');const results=await Promise.allSettled(ids.map(id=>fetchText(`/api/accounts/${id}/access-token`,'该账号暂无 AT')));const values=results.filter(item=>item.status==='fulfilled'&&item.value.trim()).map(item=>item.value.trim());if(!values.length)return toast('所选账号没有可复制的 AT');try{await copyText(values.join('\n'));const failed=results.length-values.length;toast(`已复制 ${values.length} 个 AT${failed?`，${failed} 个读取失败`:''}`)}catch(error){toast(error.message)}}
-async function cleanupSelectedAccounts(){const ids=[...selectedSuccessAccounts];if(!ids.length)return toast('请先选择完成账号');if(!confirm(`确定清理所选 ${ids.length} 个完成账号？窗口未关闭并删除的账号会保留。`))return;const results=await Promise.allSettled(ids.map(id=>api(`/api/accounts/${id}`,{method:'DELETE'})));const deleted=results.filter(item=>item.status==='fulfilled'&&item.value?.deleted).length;selectedSuccessAccounts=new Set(ids.filter((_,index)=>!(results[index].status==='fulfilled'&&results[index].value?.deleted)));toast(`已清理 ${deleted} 个账号${deleted<ids.length?`，${ids.length-deleted} 个因窗口或状态限制未清理`:''}`);await load()}
-async function cleanupSelectedResults(){const ids=[...selectedResultTasks];if(!ids.length)return toast('请先选择完成结果');if(!confirm(`确定清理所选 ${ids.length} 条完成结果记录？账号和导出结果会保留。`))return;const results=await Promise.allSettled(ids.map(id=>api(`/api/tasks/${id}`,{method:'DELETE'})));const deleted=results.filter(item=>item.status==='fulfilled'&&item.value?.deleted).length;selectedResultTasks=new Set(ids.filter((_,index)=>!(results[index].status==='fulfilled'&&results[index].value?.deleted)));toast(`已清理 ${deleted} 条结果${deleted<ids.length?`，${ids.length-deleted} 条未清理`:''}`);await load()}
-async function deleteSelectedReplacements(){const ids=[...selectedReplacements];if(!ids.length)return toast('请先选择替换邮箱');if(!confirm(`确定删除所选 ${ids.length} 个替换邮箱？活动任务正在使用的邮箱会保留。`))return;const results=await Promise.allSettled(ids.map(id=>api(`/api/replacements/${id}`,{method:'DELETE'})));const deleted=results.filter(item=>item.status==='fulfilled'&&item.value?.deleted).length;selectedReplacements=new Set(ids.filter((_,index)=>!(results[index].status==='fulfilled'&&results[index].value?.deleted)));toast(`已删除 ${deleted} 个替换邮箱${deleted<ids.length?`，${ids.length-deleted} 个因活动任务占用未删除`:''}`);await load()}
-async function deleteFinishedTask(button){if(!confirm(`确定清理已结束任务 #${button.dataset.deleteFinishedTask} 的记录？账号和导出结果会保留。`))return;button.disabled=true;try{await api(`/api/tasks/${button.dataset.deleteFinishedTask}`,{method:'DELETE'});toast('任务记录已清理');await load()}catch(error){toast(error.message);button.disabled=false}}
-async function waitForAccessTokenRefresh(accountId){for(let attempt=0;attempt<180;attempt+=1){await sleep(1000);await load();const account=STATE.accounts.find(item=>Number(item.id)===Number(accountId));if(!account)return toast('账号记录不存在');if(account.at_refresh_status==='running')continue;if(account.at_refresh_status==='failed')return toast(`重新获取 AT 失败：${account.at_refresh_error||'未知错误'}`);if(!account.at_saved)return toast('重新获取完成，但 AT 保存校验未通过');return toast(account.at_token_changed===true?'重新获取完成：AT 已更新并保存，可直接复制':'重新获取完成：AT 未变化，现有 AT 已保存，可直接复制')}toast('重新获取 AT 仍在进行，界面会继续自动刷新')}
-$('#successAccountsBody').onclick=async e=>{const push=e.target.closest('[data-push-gcash]');if(push){push.disabled=true;try{await pushAccessTokenToGCash(push.dataset.pushGcash)}catch(error){toast(error.message)}finally{push.disabled=false}return}const copy=e.target.closest('[data-copy-export]');if(copy){copy.disabled=true;try{await copyExport(`/api/accounts/${copy.dataset.copyExport}/export`);toast('已复制该账号结果')}catch(error){toast(error.message)}finally{copy.disabled=false}return}const copyAt=e.target.closest('[data-copy-at]');if(copyAt){copyAt.disabled=true;try{await copyAccessToken(copyAt.dataset.copyAt);toast('已复制该账号的单独 AT')}catch(error){toast(error.message)}finally{copyAt.disabled=false}return}const refresh=e.target.closest('[data-refresh-at]');if(refresh){refresh.disabled=true;try{const accountId=Number(refresh.dataset.refreshAt);await api(`/api/accounts/${accountId}/refresh-at`,{method:'POST'});toast('已开始检查 Roxy；无窗口时将用纯协议登录更新 AT');await load();await waitForAccessTokenRefresh(accountId)}catch(error){toast(error.message)}return}const cleanup=e.target.closest('[data-delete-success-account]');if(cleanup){await deleteAccount(cleanup,true);return}const close=e.target.closest('[data-close-roxy]');if(!close)return;if(!confirm('关闭这个成功账号的 Roxy 窗口并永久删除对应环境？删除后不能再重新获取 AT。'))return;close.disabled=true;try{await api(`/api/accounts/${close.dataset.closeRoxy}/close-roxy`,{method:'POST'});toast('Roxy 窗口已关闭，环境已删除');await load()}catch(error){toast(error.message)}};
-function setSuccessSelection(checked){selectedSuccessAccounts=checked?new Set(successAccountRows().map(a=>Number(a.id))):new Set();renderSuccessAccounts();renderSuccessTrialInfo()}
-$('#successTrialFilter').onchange=e=>{successTrialFilter=e.target.value==='trial'?'trial':'all';selectedSuccessAccounts=new Set();renderSuccessAccounts();renderSuccessTrialInfo()};
-$('#selectSuccessAll').onchange=e=>setSuccessSelection(e.target.checked);
-$('#selectSuccessAllTable').onchange=e=>setSuccessSelection(e.target.checked);
-$('#copySelectedAT').onclick=async()=>{const button=$('#copySelectedAT');button.disabled=true;try{await copySelectedAccessTokens()}finally{button.disabled=!selectedSuccessAccounts.size}};
-$('#pushSelectedGCash').onclick=async()=>{const button=$('#pushSelectedGCash');button.disabled=true;try{await pushSelectedAccessTokensToGCash()}catch(error){toast(error.message)}finally{button.disabled=!selectedSuccessAccounts.size}};
-$('#cleanupSelectedAccounts').onclick=async()=>{const button=$('#cleanupSelectedAccounts');button.disabled=true;try{await cleanupSelectedAccounts()}finally{button.disabled=!selectedSuccessAccounts.size}};
-function setReplacementSelection(checked){selectedReplacements=checked?new Set(STATE.replacements.map(r=>Number(r.id))):new Set();renderPool()}
-$('#selectReplacementAll').onchange=e=>setReplacementSelection(e.target.checked);
-$('#selectReplacementAllTable').onchange=e=>setReplacementSelection(e.target.checked);
-$('#deleteSelectedReplacements').onclick=async()=>{const button=$('#deleteSelectedReplacements');button.disabled=true;try{await deleteSelectedReplacements()}finally{button.disabled=!selectedReplacements.size}};
-$('#selectResultAll').onchange=e=>{const visible=STATE.tasks.slice(0,resultVisibleLimit()).filter(t=>['success','failed','review','stopped'].includes(t.status));selectedResultTasks=e.target.checked?new Set(visible.map(t=>Number(t.id))):new Set();renderRecent()};
-$('#cleanupSelectedResults').onclick=async()=>{const button=$('#cleanupSelectedResults');button.disabled=true;try{await cleanupSelectedResults()}finally{button.disabled=!selectedResultTasks.size}};
-$('#taskBody').onclick=async e=>{const stop=e.target.closest('[data-stop-task]');if(stop){await stopTask(stop);return}const review=e.target.closest('[data-review-login-account]');if(review){await retryReviewLoginAccount(review);return}const retry=e.target.closest('[data-retry-account]');if(retry){await retryFailedAccount(retry);return}const remove=e.target.closest('[data-delete-finished-task]');if(remove)await deleteFinishedTask(remove)};
-$('#recentTasks').onclick=async e=>{const stop=e.target.closest('[data-stop-task]');if(stop){await stopTask(stop);return}const remove=e.target.closest('[data-delete-finished-task]');if(remove)await deleteFinishedTask(remove)};
-$('#previewPairs').onclick=()=>preview();
-const resultVisibleRowsInput=$('#resultVisibleRows');if(resultVisibleRowsInput){try{const saved=Number(localStorage.getItem('email-rebind:result-visible-rows'));if(Number.isFinite(saved)&&saved>=1)resultVisibleRowsInput.value=Math.min(100,Math.floor(saved))}catch(_){}resultVisibleRowsInput.onchange=()=>{const rows=resultVisibleLimit();try{localStorage.setItem('email-rebind:result-visible-rows',String(rows))}catch(_){}renderRecent()}}
-const pairVisibleRowsInput=$('#pairVisibleRows');if(pairVisibleRowsInput){try{const saved=Number(localStorage.getItem('email-rebind:pair-visible-rows'));if(Number.isFinite(saved)&&saved>=1)pairVisibleRowsInput.value=Math.min(100,Math.floor(saved))}catch(_){}pairVisibleRowsInput.onchange=applyPairVisibleLimit}
-$('#selectAll').onchange=e=>{const ids=STATE.accounts.filter(a=>['ready','failed'].includes(a.status)).map(a=>Number(a.id));selected=e.target.checked?new Set(ids):new Set();preview()};
-$('#startRebind').onclick=async()=>{if(!selected.size)return toast('请至少选择一个待换绑账号');if(!pairs.length)return toast('没有可用的一对一配对');const openRoxyAfter=Boolean($('#openRoxyAfter')?.checked);const required=openRoxyAfter?2:1;if(Number(STATE.summary.proxy_available||0)<required)return toast(openRoxyAfter?'完成后打开 Roxy 需要至少两条可用代理':'换绑代理池没有可用代理，请先手动导入');const mode=openRoxyAfter?'纯协议完成后额外选择代理打开 Roxy':'全程纯协议，不打开 Roxy';if(!confirm(`将启动 ${pairs.length} 个换绑任务：${mode}；临时失败自动重试 ${Number($('#transientRetries').value||0)} 次。确定继续？`))return;const button=$('#startRebind');button.disabled=true;try{const r=await api('/api/rebind/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_ids:[...selected],workers:Number($('#workers').value||2),transient_retries:Number($('#transientRetries').value||0),open_roxy_after:openRoxyAfter})});toast(`已提交 ${r.submitted} 个纯协议换绑任务${r.open_roxy_after?'，完成后打开 Roxy':''}`);selected.clear();await load()}catch(e){toast(e.message)}finally{button.disabled=false}};
-async function startBrowserRebind(){if(!selected.size)return toast('请至少选择一个待换绑账号');if(!pairs.length)return toast('没有可用的一对一配对');if(Number(STATE.summary.proxy_available||0)<1)return toast('换绑代理池没有可用代理，请先手动导入');if(!confirm(`将启动 ${pairs.length} 个浏览器换绑任务：创建 Roxy、登录原邮箱、执行换绑、登录新邮箱并获取 AT；临时失败自动重试 ${Number($('#transientRetries').value||0)} 次。确定继续？`))return;const button=$('#startBrowserRebind');button.disabled=true;try{const r=await api('/api/rebind/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_ids:[...selected],workers:Number($('#workers').value||2),transient_retries:Number($('#transientRetries').value||0),rebind_mode:'browser'})});toast(`已提交 ${r.submitted} 个浏览器换绑任务`);selected.clear();await load()}catch(e){toast(e.message)}finally{button.disabled=false}}
-$('#startBrowserRebind').onclick=startBrowserRebind;
-$('#copyExport').onclick=async()=>{const button=$('#copyExport');button.disabled=true;try{await copyExport('/api/export');toast('已复制换绑完成结果')}catch(error){toast(error.message)}finally{button.disabled=false}};
-$('#copySuccessResultsBottom').onclick=async()=>{const button=$('#copySuccessResultsBottom');button.disabled=true;try{await copyExport('/api/export');toast('已复制成功账号完整结果（密码/2FA/AT）')}catch(error){toast(error.message)}finally{button.disabled=false}};
-$('#clearFinishedTasks').onclick=async()=>{const count=STATE.tasks.filter(t=>['success','failed','review','stopped'].includes(t.status)).length;if(!count)return toast('没有已结束记录');if(!confirm(`确定清理全部 ${count} 条成功、失败、停止或待核验任务记录？账号和导出结果会保留。`))return;const button=$('#clearFinishedTasks');button.disabled=true;try{const r=await api('/api/tasks/finished',{method:'DELETE'});toast(`已清理 ${r.deleted} 条已结束记录`);await load()}catch(error){toast(error.message)}finally{button.disabled=false}};
-$('#refreshTasks').onclick=load;
-const gcashFrame=$('#gcashFrame');if(gcashFrame)gcashFrame.addEventListener('load',()=>{gcashFrame.dataset.loaded='1'});
-$$('.nav').forEach(button=>button.onclick=()=>{$$('.nav').forEach(x=>x.classList.toggle('active',x===button));document.body.classList.toggle('gcash-only',button.dataset.view==='gcash');$$('.view').forEach(v=>v.classList.add('hidden'));$(`#view-${button.dataset.view}`).classList.remove('hidden');if(button.dataset.view==='gcash'){const frame=$('#gcashFrame');if(frame&&!frame.getAttribute('src'))frame.src=frame.dataset.src}});
-const successAccountBody=$('#successAccountsBody');if(successAccountBody&&window.MutationObserver)new MutationObserver(()=>renderSuccessTrialInfo()).observe(successAccountBody,{childList:true});
-load();setInterval(load,3000);
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import roxy_flow
+import roxy_browser_rebind as browser_rebind
+import protocol_flow
+import settings
+import store
+import trial_check
+
+logger = logging.getLogger(__name__)
+_LOCK = threading.RLock()
+_EXECUTORS: list[ThreadPoolExecutor] = []
+_ACTION_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-action")
+_TRIAL_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-rebind-trial")
+_TRIAL_PROXY_RETRIES = 8
+
+
+_TRANSIENT_STAGES = {
+    "queued", "running", "protocol_login_old", "protocol_upstream", "protocol_reauth", "check_proxy", "login_old", "login_password", "login_totp",
+    "login_email_otp", "submit_login_email_otp", "check_email_eligibility",
+    "submit_new_email",
+}
+_NON_RETRYABLE_MARKERS = (
+    "不符合自助换绑条件", "社交登录账号", "需要密码", "没有 mfa", "没有对应的 api",
+    "频率或次数限制", "频率限制", "次数限制", "被拒绝", "rate limit",
+    "not_eligible", "eligible=false", "用户名或密码错误", "totp 校验失败",
+    "email/password/totp_secret 不能为空",
+)
+
+
+def _should_auto_retry(task: dict, exc: Exception) -> bool:
+    """仅重试服务端/浏览器临时故障，绝不跨过验证码已提交的未知结果。"""
+    if isinstance(exc, (roxy_flow.ProxyFailure, roxy_flow.ReplacementEmailFailure, roxy_flow.RebindOutcomeUnknown)):
+        return False
+    message = str(exc or "").strip().lower()
+    if any(marker.lower() in message for marker in _NON_RETRYABLE_MARKERS):
+        return False
+    stage = str(task.get("stage") or "").strip()
+    if stage == "submit_new_email_otp":
+        return any(marker in message for marker in ("未取得服务端响应", "可使用失败重试", "http 401", "http 422", "http 400", "http 409"))
+    if stage in {"changed", "relogin_new", "protocol_relogin_new", "verified", "protocol_verified", "kept_open", "manual_review", "wait_new_email_otp"}:
+        return False
+    return isinstance(exc, TimeoutError) or stage in _TRANSIENT_STAGES
+
+
+def _refresh_access_token(account_id: int) -> None:
+    account = store.get_success_account_context(account_id)
+    if not account:
+        store.fail_access_token_refresh(account_id, "成功账号不存在")
+        return
+    profile_id = str(account.get("roxy_profile_id") or "").strip()
+    expected_email = str(account.get("new_email") or account.get("current_email") or "").strip()
+    roxy_open = account.get("roxy_browser_status") == "open" and bool(profile_id)
+    try:
+        if roxy_open:
+            logger.info("成功账号 #%s 检测到 Roxy 窗口，复用窗口更新 AT", account_id)
+            result = roxy_flow.refresh_retained_access_token(profile_id, expected_email)
+        else:
+            proxy = store.pick_random_proxy() or {}
+            proxy_url = str(proxy.get("proxy_url") or "").strip()
+            logger.info(
+                "成功账号 #%s 未检测到 Roxy 窗口，执行一次纯协议登录更新 AT%s",
+                account_id, f"（代理 {proxy.get('display') or proxy.get('id')}）" if proxy_url else "",
+            )
+            result = protocol_flow.refresh_access_token_protocol(
+                email=expected_email,
+                password=str(account.get("password") or ""),
+                totp_secret=str(account.get("totp_secret") or ""),
+                proxy_url=proxy_url,
+            )
+        store.finish_access_token_refresh(account_id, result)
+        submit_trial_check(account_id)
+    except Exception as exc:  # noqa: BLE001 - 操作结果必须回写页面状态
+        logger.exception("成功账号 #%s 重新获取 AT 失败", account_id)
+        store.fail_access_token_refresh(
+            account_id, f"{type(exc).__name__}: {str(exc)[:500]}",
+            browser_open=roxy_open and roxy_flow.retained_profile_is_connected(profile_id),
+        )
+
+
+def submit_access_token_refresh(account_id: int) -> dict:
+    account = store.begin_access_token_refresh(account_id)
+    if not account:
+        current = store.get_success_account_context(account_id)
+        if current and current.get("at_refresh_status") == "running":
+            return {"accepted": False, "busy": True, "error": "该账号正在重新获取 AT"}
+        return {"accepted": False, "busy": False, "error": "成功账号不存在或无法启动 AT 检查"}
+    try:
+        _ACTION_EXECUTOR.submit(_refresh_access_token, int(account_id))
+    except Exception as exc:
+        store.fail_access_token_refresh(account_id, f"后台任务提交失败：{type(exc).__name__}: {exc}")
+        raise
+    return {"accepted": True, "account_id": int(account_id)}
+
+
+def submit_trial_check(account_id: int) -> dict:
+    account = store.get_success_account_context(account_id)
+    if not account or not str(account.get("access_token") or "").strip():
+        return {"accepted": False, "busy": False, "error": "成功账号暂无 AT"}
+    if not store.list_detection_proxies():
+        store.finish_trial_check(account_id, {"ok": False, "error": "未配置资格检测代理"})
+        return {"accepted": False, "busy": False, "error": "未配置资格检测代理"}
+    current = store.begin_trial_check(account_id)
+    if not current:
+        account = store.get_success_account_context(account_id) or {}
+        if account.get("trial_check_status") == "running":
+            return {"accepted": False, "busy": True, "error": "该账号正在检测资格"}
+        return {"accepted": False, "busy": False, "error": "账号无法启动资格检测"}
+    # begin_trial_check marks it running; hand the captured context directly to
+    # avoid claiming the same account a second time inside the worker.
+    def run_captured() -> None:
+        claim = current
+        proxy = claim["proxy"]
+        for attempt in range(_TRIAL_PROXY_RETRIES):
+            try:
+                result = trial_check.check_zero_trial(
+                    claim["access_token"],
+                    f'{proxy.get("country") or ""}|{proxy.get("proxy_url") or ""}',
+                )
+            except Exception as exc:
+                result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}", "trial_proxy_country": str(proxy.get("country") or "").upper()}
+            store.finish_trial_check(account_id, result)
+            store.mark_detection_proxy_result(int(proxy.get("id") or 0), result)
+            if not result.get("ok") or result.get("trial_zero_trial_eligible") is True:
+                break
+            # A successful API response without a promotion can be exit-IP
+            # specific. Try another static ID proxy before declaring no trial.
+            next_claim = store.begin_trial_check(account_id)
+            if not next_claim:
+                break
+            claim = next_claim
+            proxy = claim["proxy"]
+    try:
+        _TRIAL_EXECUTOR.submit(run_captured)
+    except Exception as exc:
+        store.finish_trial_check(account_id, {"ok": False, "error": f"后台资格检测提交失败：{type(exc).__name__}: {exc}"})
+        raise
+    return {"accepted": True, "account_id": int(account_id), "status": "running"}
+
+
+def _open_roxy_after_protocol(
+    *, task_id: int, task: dict, account: dict, replacement: dict,
+    protocol_result: dict, protocol_proxy: dict,
+    retry_limit: int, stop_check,
+) -> dict:
+    """换绑已经成功后，额外选择另一条代理创建 Roxy 登录窗口。"""
+    excluded = {int(protocol_proxy.get("id") or 0)}
+    last_error = "没有可用于 Roxy 扩展登录的第二条代理"
+    for roxy_attempt in range(1, settings.MAX_PROXY_ATTEMPTS + 1):
+        if stop_check():
+            break
+        roxy_proxy = store.pick_random_proxy(excluded)
+        if not roxy_proxy:
+            break
+        proxy_id = int(roxy_proxy.get("id") or 0)
+        excluded.add(proxy_id)
+        proxy_display = str(roxy_proxy.get("display") or f"代理 #{proxy_id}")
+        store.update_task(
+            task_id, status="running", stage="open_roxy_after_protocol",
+            message=f"纯协议换绑已完成；第 {roxy_attempt} 条额外代理 {proxy_display} 正在打开 Roxy",
+            roxy_proxy_id=proxy_id, roxy_proxy_display=proxy_display,
+        )
+
+        def roxy_progress(stage: str, message: str) -> None:
+            if stop_check():
+                raise roxy_flow.TaskStopRequested("用户已请求停止")
+            store.update_task(
+                task_id, status="running", stage=f"roxy_{stage}",
+                message=f"纯协议换绑已完成；Roxy 扩展：{message}",
+                email_change_confirmed=True,
+            )
+
+        def roxy_proxy_verified(exit_geo: dict) -> None:
+            store.mark_proxy_success(
+                proxy_id, task_id=task_id,
+                old_email=str(account.get("old_email") or ""), exit_geo=exit_geo,
+            )
+
+        try:
+            roxy_result = roxy_flow.perform_replacement_login(
+                new_email=str(replacement.get("email") or ""),
+                password=str(account.get("password") or ""),
+                totp_secret=str(account.get("totp_secret") or ""),
+                api_url=str(replacement.get("api_url") or ""),
+                auth_method=str(account.get("auth_method") or ""),
+                proxy_url=str(roxy_proxy.get("proxy_url") or ""),
+                progress=roxy_progress,
+                proxy_verified=roxy_proxy_verified,
+                max_relogin_retries=retry_limit,
+                stop_check=stop_check,
+            )
+            return {
+                **protocol_result, **roxy_result,
+                "protocol_engine": protocol_result.get("protocol_engine"),
+                "protocol_upstream_commit": protocol_result.get("protocol_upstream_commit"),
+                "roxy_open_requested": True,
+                "roxy_proxy_id": proxy_id,
+                "roxy_proxy_display": proxy_display,
+            }
+        except roxy_flow.ProxyFailure as exc:
+            last_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            store.mark_proxy_failure(
+                proxy_id, task_id=task_id,
+                old_email=str(account.get("old_email") or ""), error=last_error,
+            )
+            continue
+        except roxy_flow.TaskStopRequested:
+            last_error = "用户在纯协议完成后停止了 Roxy 扩展登录"
+            break
+        except Exception as exc:  # 换绑已经成功，Roxy 扩展失败不能回滚身份
+            last_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            logger.exception("纯协议已成功，但 Roxy 扩展登录失败：task=%s", task_id)
+            break
+    return {
+        **protocol_result,
+        "roxy_open_requested": True,
+        "roxy_browser_status": "open_failed",
+        "roxy_open_error": last_error,
+    }
+
+
+def _run(task_id: int) -> None:
+    current_task_id = int(task_id)
+    active_proxy: dict | None = None
+    excluded_proxy_ids: set[int] = set()
+    proxy_attempt = 0
+    allow_proxy_reuse = False
+    while True:
+        context = store.get_task_context(current_task_id)
+        if not context:
+            store.finish_failure(current_task_id, "任务关联的账号或替换邮箱不存在")
+            return
+        task = context["task"]
+        account = context["account"]
+        replacement = context["replacement"]
+        if store.is_task_stop_requested(current_task_id):
+            store.finish_stopped(current_task_id)
+            return
+        attempt = int(task.get("attempt") or 1)
+        login_only = bool(task.get("login_only"))
+        change_confirmed = bool(login_only or task.get("email_change_confirmed"))
+        retry_limit = max(0, min(
+            int(task.get("max_transient_retries", settings.MAX_TRANSIENT_RETRIES) or 0), 10,
+        ))
+        if active_proxy is None:
+            if proxy_attempt >= settings.MAX_PROXY_ATTEMPTS:
+                message = f"换绑代理已达到自动切换上限 {settings.MAX_PROXY_ATTEMPTS} 条"
+                if login_only:
+                    store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                else:
+                    store.finish_failure(current_task_id, message)
+                return
+            active_proxy = store.pick_random_proxy(excluded_proxy_ids)
+            if not active_proxy and allow_proxy_reuse:
+                # 临时故障重试优先换未用代理；只有代理池本身没有第二条时，
+                # 才允许复用当前代理，避免单代理配置直接失去自动重试机会。
+                excluded_proxy_ids.clear()
+                active_proxy = store.pick_random_proxy()
+            allow_proxy_reuse = False
+            if not active_proxy:
+                message = "换绑代理池没有可用代理；失败代理已保留原因，请补充或重新启用后重试"
+                if login_only:
+                    store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                else:
+                    store.finish_failure(current_task_id, message)
+                return
+            proxy_attempt += 1
+            excluded_proxy_ids.add(int(active_proxy.get("id") or 0))
+        store.assign_task_proxy(current_task_id, active_proxy, proxy_attempt)
+        proxy_display = str(active_proxy.get("display") or f"代理 #{active_proxy.get('id')}")
+        initial_stage = "open_roxy" if login_only else "protocol_login_old"
+        initial_message = (
+            f"第 {attempt} 次登录补救 / 第 {proxy_attempt} 条代理：使用 {proxy_display} 打开 Roxy"
+            if login_only else
+            f"第 {attempt} 次纯协议换绑 / 第 {proxy_attempt} 条代理：使用 {proxy_display} 登录原邮箱"
+        )
+        store.update_task(
+            current_task_id, status="running", stage=initial_stage,
+            message=initial_message,
+        )
+
+        def progress(stage: str, message: str) -> None:
+            nonlocal change_confirmed
+            if stage == "changed":
+                change_confirmed = True
+            if store.is_task_stop_requested(current_task_id):
+                raise roxy_flow.TaskStopRequested("用户已请求停止")
+            # 同步本轮真实阶段，避免前一条代理失败留下的 proxy_failed 阶段
+            # 阻断 submit_new_email 临时故障的既有自动重试机制。
+            task["stage"] = stage
+            store.update_task(
+                current_task_id, status="running", stage=stage,
+                message=f"第 {attempt} 次邮箱尝试 / 第 {proxy_attempt} 条代理：{message}",
+                email_change_confirmed=change_confirmed,
+            )
+
+        def stop_check() -> bool:
+            return store.is_task_stop_requested(current_task_id)
+
+        def proxy_verified(exit_geo: dict) -> None:
+            store.mark_proxy_success(
+                int(active_proxy.get("id") or 0), task_id=current_task_id,
+                old_email=str(account.get("old_email") or ""), exit_geo=exit_geo,
+            )
+
+        try:
+            if login_only:
+                result = roxy_flow.perform_replacement_login(
+                    new_email=str(replacement.get("email") or account.get("current_email") or ""),
+                    password=str(account.get("password") or ""),
+                    totp_secret=str(account.get("totp_secret") or ""),
+                    api_url=str(replacement.get("api_url") or ""),
+                    auth_method=str(account.get("auth_method") or ""),
+                    proxy_url=str(active_proxy.get("proxy_url") or ""),
+                    progress=progress,
+                    proxy_verified=proxy_verified,
+                    max_relogin_retries=retry_limit,
+                    stop_check=stop_check,
+                )
+            elif str(task.get("rebind_mode") or "protocol") == "browser":
+                result = browser_rebind.perform_email_rebind(
+                    old_email=str(account.get("old_email") or ""),
+                    new_email=str(replacement.get("email") or ""),
+                    password=str(account.get("password") or ""),
+                    totp_secret=str(account.get("totp_secret") or ""),
+                    source_api_url=str(account.get("api_url") or ""),
+                    auth_method=str(account.get("auth_method") or ""),
+                    api_url=str(replacement.get("api_url") or ""),
+                    proxy_url=str(active_proxy.get("proxy_url") or ""),
+                    progress=progress,
+                    proxy_verified=proxy_verified,
+                    max_relogin_retries=retry_limit,
+                    stop_check=stop_check,
+                )
+            else:
+                result = protocol_flow.run_upstream_rebind(
+                    old_email=str(account.get("old_email") or ""),
+                    new_email=str(replacement.get("email") or ""),
+                    password=str(account.get("password") or ""),
+                    totp_secret=str(account.get("totp_secret") or ""),
+                    api_url=str(replacement.get("api_url") or ""),
+                    proxy_url=str(active_proxy.get("proxy_url") or ""),
+                    progress=progress,
+                    stop_check=stop_check,
+                )
+                change_confirmed = True
+                store.mark_proxy_success(
+                    int(active_proxy.get("id") or 0), task_id=current_task_id,
+                    old_email=str(account.get("old_email") or ""),
+                )
+                if bool(task.get("open_roxy_after")):
+                    result = _open_roxy_after_protocol(
+                        task_id=current_task_id, task=task, account=account,
+                        replacement=replacement, protocol_result=result,
+                        protocol_proxy=active_proxy, retry_limit=retry_limit,
+                        stop_check=stop_check,
+                    )
+            store.finish_success(current_task_id, result)
+            submit_trial_check(int(context["account"]["id"]))
+            return
+        except roxy_flow.TaskStopRequested as exc:
+            logger.info("换绑任务 #%s 收到停止请求：%s", current_task_id, exc)
+            store.finish_stopped(current_task_id)
+            return
+        except roxy_flow.ProxyFailure as exc:
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
+            message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            logger.warning(
+                "换绑代理检测失败，准备自动切换：task=%s proxy_id=%s reason=%s",
+                current_task_id, active_proxy.get("id"), message,
+            )
+            store.mark_proxy_failure(
+                int(active_proxy.get("id") or 0), task_id=current_task_id,
+                old_email=str(account.get("old_email") or ""), error=message,
+            )
+            store.update_task(
+                current_task_id, status="running", stage="proxy_failed",
+                message=f"{proxy_display} 检测失败并已标记不可用；正在随机切换下一条代理",
+            )
+            active_proxy = None
+            continue
+        except roxy_flow.ReplacementEmailFailure as exc:
+            message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
+            if login_only:
+                logger.error("已换绑账号补救登录失败：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
+                store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                return
+            logger.warning("替换邮箱失败，准备自动轮换：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
+            rotation = store.rotate_failed_replacement(
+                current_task_id, message, exc.code, settings.MAX_REPLACEMENT_ATTEMPTS,
+            )
+            next_task = rotation.get("next_task")
+            if not next_task:
+                return
+            current_task_id = int(next_task["id"])
+        except roxy_flow.RebindOutcomeUnknown as exc:
+            message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
+            logger.error("换绑结果待人工核验：task=%s new_email=%s reason=%s", current_task_id, exc.new_email, message)
+            store.finish_review_failure(current_task_id, exc.new_email, message)
+            return
+        except Exception as exc:  # noqa: BLE001 - 任务终态需持久化完整异常类型
+            message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
+            if login_only:
+                logger.error("已换绑账号补救登录失败：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
+                store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                return
+            if _should_auto_retry(task, exc):
+                rotation = store.retry_transient_failure(
+                    current_task_id, message, retry_limit,
+                )
+                next_task = rotation.get("next_task")
+                if next_task:
+                    logger.warning(
+                        "换绑任务 #%s 遇到临时故障，自动重试第 %s 次：%s",
+                        current_task_id, next_task.get("attempt"), message,
+                    )
+                    active_proxy = None
+                    allow_proxy_reuse = True
+                    current_task_id = int(next_task["id"])
+                    if settings.TRANSIENT_RETRY_DELAY:
+                        deadline = time.monotonic() + settings.TRANSIENT_RETRY_DELAY
+                        while time.monotonic() < deadline:
+                            if store.is_task_stop_requested(current_task_id):
+                                store.finish_stopped(current_task_id)
+                                return
+                            time.sleep(min(0.25, deadline - time.monotonic()))
+                    continue
+                if rotation.get("reason") == "attempt_limit":
+                    logger.error(
+                        "换绑任务 #%s 临时故障重试耗尽：%s", current_task_id, message,
+                    )
+                    return
+            logger.exception("换绑任务 #%s 失败", current_task_id)
+            store.finish_failure(current_task_id, message)
+            return
+
+
+def submit_tasks(tasks: list[dict], workers: int) -> int:
+    if not tasks:
+        return 0
+    executor = ThreadPoolExecutor(max_workers=max(1, min(int(workers or 1), len(tasks), 10)), thread_name_prefix="email-rebind")
+    with _LOCK:
+        _EXECUTORS.append(executor)
+    futures = [executor.submit(_run, int(task["id"])) for task in tasks]
+
+    def shutdown_when_done() -> None:
+        for future in futures:
+            try:
+                future.result()
+            except Exception:
+                pass
+        executor.shutdown(wait=False)
+        with _LOCK:
+            if executor in _EXECUTORS:
+                _EXECUTORS.remove(executor)
+
+    threading.Thread(target=shutdown_when_done, daemon=True, name="email-rebind-batch-cleanup").start()
+    return len(tasks)

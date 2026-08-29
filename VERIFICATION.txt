@@ -1,4 +1,4 @@
-Changed branch/field: success-account toolbar now has successTrialFilter; selecting “仅有试用资格” renders only accounts with trial_check_status=success and trial_zero_trial_eligible=true. Selection and qualification-column rendering share the same filtered row set.
+Changed branch/field: worker.run_captured now retries up to 8 different static qualification proxies when the API returns a successful “no trial” result; it stops on an eligible free-trial result or a terminal/error result. This addresses exit-IP-specific campaign responses.
 
 Artifacts:
 - MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\MODIFIED_FILE
@@ -7,18 +7,18 @@ Artifacts:
 - ROLLBACK.sh: C:\Users\Administrator\Desktop\email-rebind-console\ROLLBACK.sh
 
 BASELINE command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-BASELINE input: commit 16e5f353 before success-account filter edits
-BASELINE literal result: 109 passed, 5 subtests passed in 5.19s
+BASELINE input: commit ae06b50 before trial retry edits
+BASELINE literal result: 109 passed, 5 subtests passed in 5.00s
 BASELINE exit status: 0
 
 MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-MODIFIED input: working tree with successTrialFilter toolbar and filtered rendering
-MODIFIED literal result: 109 passed, 5 subtests passed in 5.00s
+MODIFIED input: working tree with multi-proxy trial retry and regression coverage
+MODIFIED literal result: 110 passed, 5 subtests passed in 5.27s
 MODIFIED exit status: 0
 
 ROLLBACK command: bash ROLLBACK.sh verification/rollback_tmp/target verification/rollback_tmp/baseline
-ROLLBACK input: temporary copy of MODIFIED_FILE and static/app.js from commit 16e5f353
+ROLLBACK input: temporary copy of MODIFIED_FILE and worker.py from commit ae06b50
 ROLLBACK literal result: rollback restored verification/rollback_tmp/target from verification/rollback_tmp/baseline; SHA256 byte comparison matched
 ROLLBACK exit status: 0
 
-Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed static/app.js copy.
+Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed worker.py copy.
