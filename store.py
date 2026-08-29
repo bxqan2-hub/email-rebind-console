@@ -1790,6 +1790,29 @@ def recover_interrupted_access_token_refreshes() -> int:
         return recovered
 
 
+def recover_interrupted_trial_checks() -> int:
+    """Release trial checks left running when the service stopped or restarted."""
+    with _LOCK:
+        rows = _read(_ACCOUNTS)
+        recovered = 0
+        now = _now()
+        for row in rows:
+            if row.get("trial_check_status") not in {"queued", "running"}:
+                continue
+            row.update({
+                "trial_check_status": "failed",
+                "trial_check_completed_at": now,
+                "trial_zero_trial_eligible": None,
+                "trial_label": "检测失败",
+                "trial_check_error": "资格检测进程已中断，请重新检测",
+                "updated_at": now,
+            })
+            recovered += 1
+        if recovered:
+            _write(_ACCOUNTS, rows)
+        return recovered
+
+
 def _replacement_api_url(row: dict, replacements: list[dict]) -> str:
     persisted = str(row.get("replacement_api_url") or "").strip()
     if persisted:

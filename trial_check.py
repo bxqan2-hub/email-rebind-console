@@ -48,7 +48,9 @@ def check_zero_trial(access_token: str, proxy_spec: str) -> dict:
         str(access_token or "").strip(),
         proxy=resolved_proxy,
         timezone_offset_min=detection_proxy.infer_timezone_offset_min(spec, fallback="-"),
-        max_attempts=0,
+        # One request cycle per proxy. The worker owns cross-proxy retries;
+        # using 0 here made a broken proxy retry forever and left the UI stuck.
+        max_attempts=1,
         fast_mode=True,
     )
     offer_kind = str(result.get("plus_trial_offer_kind") or "").strip().lower()

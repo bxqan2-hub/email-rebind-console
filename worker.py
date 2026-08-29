@@ -127,10 +127,18 @@ def submit_trial_check(account_id: int) -> dict:
                 result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}", "trial_proxy_country": str(proxy.get("country") or "").upper()}
             store.finish_trial_check(account_id, result)
             store.mark_detection_proxy_result(int(proxy.get("id") or 0), result)
-            if not result.get("ok") or result.get("trial_zero_trial_eligible") is True:
+            if result.get("trial_zero_trial_eligible") is True:
+                break
+            terminal = bool(
+                result.get("plan_terminal_code")
+                or result.get("account_unusable_code")
+                or result.get("credential_unusable_code")
+                or result.get("token_expired") is True
+            )
+            if terminal:
                 break
             # A successful API response without a promotion can be exit-IP
-            # specific. Try another static ID proxy before declaring no trial.
+            # specific. Transient proxy failures also move to the next proxy.
             next_claim = store.begin_trial_check(account_id)
             if not next_claim:
                 break

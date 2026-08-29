@@ -20,6 +20,7 @@ def create_app(*, recover: bool = True) -> Flask:
     if recover:
         store.recover_interrupted_tasks()
         store.recover_interrupted_access_token_refreshes()
+        store.recover_interrupted_trial_checks()
         store.backfill_success_replacement_api_urls()
         for account in store.list_accounts():
             if (
