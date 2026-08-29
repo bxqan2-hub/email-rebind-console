@@ -1,0 +1,44 @@
+UI result display optimization verification
+=========================================
+
+Changed branch/field
+--------------------
+- Completion result panel now has `resultVisibleRows` (1-100, default 10).
+- `renderRecent()` uses the configured limit instead of the hard-coded five/eight-row window and persists the value in localStorage key `email-rebind:result-visible-rows`.
+- Result rows are kept in a scrollable panel (`result-task-list`) so completed accounts remain reachable when several accounts run together.
+
+Artifacts
+---------
+- MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\verification\MODIFIED_FILE
+- DIFF_FILE: C:\Users\Administrator\Desktop\email-rebind-console\verification\DIFF_FILE
+- VERIFICATION.txt: C:\Users\Administrator\Desktop\email-rebind-console\verification\VERIFICATION.txt
+- ROLLBACK.sh: C:\Users\Administrator\Desktop\email-rebind-console\verification\ROLLBACK.sh
+
+BASELINE
+--------
+Command: `$env:PYTHONPATH='.'; pytest -q tests`
+Input: repository at commit 1e1a689 before UI result-display changes.
+Literal output/result:
+`106 passed, 5 subtests passed in 5.09s`
+Exit status: 0
+Original static/app.js SHA256: `35875D0092FF24418CEBE3A702BB22BF53B697386CDF07CCDCB86BE3C3CB3FAE`
+
+MODIFIED
+--------
+Command: `$env:PYTHONPATH='.'; pytest -q tests; node --check static/app.js`
+Input: modified working tree with resultVisibleRows control and result-task-list scrolling.
+Literal output/result:
+`106 passed, 5 subtests passed in 5.16s`
+`node --check static/app.js` produced no output.
+Exit status: 0
+Modified static/app.js SHA256: `9A54AAE9B49B0A14B8CCB1758F50B2C887ECC15588EDC842ED333A317883048B`
+
+ROLLBACK
+--------
+Command: `& 'C:\Program Files\Git\bin\bash.exe' verification/ROLLBACK.sh verification/rollback-input.js verification/ui_baseline_app.js`
+Input: a separate copy at `verification/rollback-input.js` containing MODIFIED_FILE.
+Literal output/result:
+`ROLLBACK_TARGET=verification/rollback-input.js`
+`RESTORED_HASH=35875d0092ff24418cebe3a702bb22bf53b697386cdf07ccdcb86be3c3cb3fae`
+Exit status: 0
+Restored behavior/status: separate copy hash matches the preserved baseline; MODIFIED_FILE and live source remain on the changed branch.
