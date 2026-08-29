@@ -253,6 +253,8 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="detectionProxyImport"', html)
         self.assertIn('id="importDetectionProxies"', html)
         self.assertIn('id="checkAllTrials"', html)
+        self.assertIn('id="detectionProxySummary"', html)
+        self.assertIn('proxy-pool-table', html)
         self.assertIn('id="pushSelectedGCash"', html)
         self.assertIn('id="cleanupSelectedAccounts"', html)
         self.assertIn('id="selectResultAll"', html)
