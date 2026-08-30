@@ -31,7 +31,8 @@ _NON_RETRYABLE_MARKERS = (
     "不符合自助换绑条件", "社交登录账号", "需要密码", "没有 mfa", "没有对应的 api",
     "频率或次数限制", "频率限制", "次数限制", "被拒绝", "rate limit",
     "not_eligible", "eligible=false", "用户名或密码错误", "totp 校验失败",
-    "email/password/totp_secret 不能为空",
+    "email/password/totp_secret 不能为空", "2fa 内容不是有效的 base32 secret",
+    "2fa url 中没有可识别的 base32 secret",
 )
 
 

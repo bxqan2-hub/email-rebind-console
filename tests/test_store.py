@@ -55,6 +55,23 @@ class StoreTests(unittest.TestCase):
                 self.assertNotIn("api_url", accounts[0])
                 self.assertEqual(store.list_replacements(), [])
 
+    def test_source_import_accepts_metadata_before_password_and_2fa_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"):
+                result = store.import_source_accounts(
+                    "old@example.com----metadata@example.net----Password!----"
+                    "https://2fa.example/JBSWY3DPEHPK3PXP"
+                )
+                private = store._read(store._ACCOUNTS)[0]
+
+        self.assertEqual(result["parsed"], 1)
+        self.assertEqual(private["password"], "Password!")
+        self.assertEqual(
+            private["totp_secret"],
+            "https://2fa.example/JBSWY3DPEHPK3PXP",
+        )
+
     def test_reimport_can_switch_original_account_login_method(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

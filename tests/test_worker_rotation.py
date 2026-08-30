@@ -10,6 +10,14 @@ import worker
 
 
 class WorkerRotationTests(unittest.TestCase):
+    def test_invalid_totp_material_is_not_auto_retried(self):
+        self.assertFalse(
+            worker._should_auto_retry(
+                {"stage": "protocol_login_old"},
+                ValueError("2FA 内容不是有效的 Base32 Secret"),
+            )
+        )
+
     def test_transient_failure_retries_same_replacement_automatically(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

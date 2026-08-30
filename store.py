@@ -14,6 +14,7 @@ from typing import Any, Iterable
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import settings
+from totp_source import resolve_totp_secret
 
 _LOCK = threading.RLock()
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -585,10 +586,26 @@ def import_source_accounts(text: str) -> dict:
         ):
             parsed.append({"email": parts[0], "api_url": parts[1], "auth_method": "email_api"})
             continue
-        if email_valid and len(parts) >= 3 and parts[1] and parts[2]:
+        if email_valid and len(parts) >= 3:
+            # Accept both the documented three-column form and supplier rows
+            # that insert metadata (commonly a recovery email) before the
+            # final password + 2FA value. Validate the final field as TOTP so
+            # an extra column can never silently become the MFA secret.
+            password_index = 1 if len(parts) == 3 else len(parts) - 2
+            totp_index = 2 if len(parts) == 3 else len(parts) - 1
+            password = parts[password_index]
+            totp_value = parts[totp_index]
+            try:
+                resolve_totp_secret(totp_value)
+            except ValueError as exc:
+                invalid.append({"line": number, "reason": str(exc)})
+                continue
+            if not password:
+                invalid.append({"line": number, "reason": "原邮箱密码为空"})
+                continue
             parsed.append({
-                "email": parts[0], "password": parts[1],
-                "totp_secret": parts[2], "auth_method": "password_totp",
+                "email": parts[0], "password": password,
+                "totp_secret": totp_value, "auth_method": "password_totp",
             })
             continue
         invalid.append({

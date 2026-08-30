@@ -1,6 +1,6 @@
-Changed branch/field: protocol_flow failure classification now treats authorize/continue HTTP 429/rate_limit_exceeded as ProxyFailure (disable that proxy and rotate) and treats LOGIN_FAILED “登录结果缺少 access_token” as ProtocolSessionFailure (fresh complete login on another proxy). Explicit invalid_username_or_password remains terminal.
+Changed branch/field: store.import_source_accounts now validates the actual final 2FA field and supports supplier rows containing metadata before the final password + 2FA URL. It no longer silently stores the metadata column as password and the password column as TOTP. Invalid TOTP material is terminal instead of consuming automatic retries. The four observed malformed records were repaired in runtime data using their matching source records and are ready for explicit failure retry.
 
-Upstream comparison: GitHub main HEAD remains e27b3217dbfddab19e83dc57ab225173877e4663, matching the vendored lock. The upstream README documents the same password+TOTP → begin → verify → relogin/export flow, so the repair stays in the local adapter and preserves the locked upstream implementation.
+Latest failure evidence: task IDs 17-20 ended with “2FA 内容不是有效的 Base32 Secret”; their persisted third field was a 14-character password-like value, while source records provide a valid 32-character Base32 TOTP. Other active tasks show ordinary proxy TLS/connect failures and are already rotating proxies.
 
 Artifacts:
 - MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\MODIFIED_FILE
@@ -9,18 +9,18 @@ Artifacts:
 - ROLLBACK.sh: C:\Users\Administrator\Desktop\email-rebind-console\ROLLBACK.sh
 
 BASELINE command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-BASELINE input: commit 3e3aac0 before latest upstream failure-routing fix
-BASELINE literal result: 124 passed, 5 subtests passed in 9.44s
+BASELINE input: commit d766d5c before supplier-row parser repair
+BASELINE literal result: 126 passed, 5 subtests passed in 9.30s
 BASELINE exit status: 0
 
 MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-MODIFIED input: working tree with rate-limit and missing-access-token routing plus two regression tests
-MODIFIED literal result: 126 passed, 5 subtests passed in 9.30s
+MODIFIED input: working tree with final-column TOTP parsing and nonretryable invalid-material classification
+MODIFIED literal result: 128 passed, 5 subtests passed in 9.54s
 MODIFIED exit status: 0
 
 ROLLBACK command: bash ROLLBACK.sh verification/rollback_tmp/target verification/rollback_tmp/baseline
-ROLLBACK input: temporary copy of MODIFIED_FILE and protocol_flow.py from commit 3e3aac0
+ROLLBACK input: temporary copy of MODIFIED_FILE and store.py from commit d766d5c
 ROLLBACK literal result: rollback restored verification/rollback_tmp/target from verification/rollback_tmp/baseline; SHA256 byte comparison matched
 ROLLBACK exit status: 0
 
-Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed protocol_flow.py copy.
+Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed store.py copy.
