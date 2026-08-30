@@ -118,6 +118,7 @@ def submit_trial_check(account_id: int) -> dict:
         claim = current
         proxy = claim["proxy"]
         last_result = None
+        attempted_proxy_ids = {int(proxy.get("id") or 0)}
         for attempt in range(_TRIAL_PROXY_RETRIES):
             try:
                 result = trial_check.check_zero_trial(
@@ -141,11 +142,12 @@ def submit_trial_check(account_id: int) -> dict:
                 break
             # A successful API response without a promotion can be exit-IP
             # specific. Transient proxy failures also move to the next proxy.
-            next_claim = store.begin_trial_check(account_id)
+            next_claim = store.begin_trial_check(account_id, exclude_proxy_ids=attempted_proxy_ids)
             if not next_claim:
                 break
             claim = next_claim
             proxy = claim["proxy"]
+            attempted_proxy_ids.add(int(proxy.get("id") or 0))
         # Every retry claims the account again, so an exhausted loop would
         # otherwise leave the final claim stuck in ``running`` forever.
         if last_result is not None:

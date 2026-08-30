@@ -308,7 +308,7 @@ def mark_detection_proxy_result(proxy_id: int, result: dict) -> None:
         _write(_DETECTION_PROXIES, rows)
 
 
-def begin_trial_check(account_id: int) -> dict | None:
+def begin_trial_check(account_id: int, *, exclude_proxy_ids: set[int] | None = None) -> dict | None:
     with _LOCK:
         accounts = _read(_ACCOUNTS)
         row = next((item for item in accounts if int(item.get("id") or 0) == int(account_id)), None)
@@ -316,22 +316,12 @@ def begin_trial_check(account_id: int) -> dict | None:
             return None
         if row.get("trial_check_status") in {"queued", "running"}:
             return None
-        # Rotate through the static qualification pool instead of always taking
-        # the first row.  Providers can expose different campaign eligibility
-        # per exit IP; pinning every account to row 1 caused eligible accounts
-        # to be reported as having no trial when that endpoint returned no
-        # promotion for the first exit.
         detection_proxies = _read(_DETECTION_PROXIES)
         candidates = [item for item in detection_proxies if item.get("status") == "available"]
-        proxy = min(
-            candidates,
-            key=lambda item: (
-                0 if item.get("trial_eligible") is True else 1,
-                int(item.get("check_count") or 0),
-                str(item.get("last_used_at") or ""),
-                int(item.get("id") or 0),
-            ),
-        ) if candidates else None
+        excluded = {int(value) for value in (exclude_proxy_ids or set())}
+        untried = [item for item in candidates if int(item.get("id") or 0) not in excluded]
+        pool = untried or candidates
+        proxy = _PROXY_RANDOM.choice(pool) if pool else None
         now = _now()
         if not proxy:
             row.update({"trial_check_status": "not_configured", "trial_check_error": "未配置资格检测代理", "updated_at": now})
