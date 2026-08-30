@@ -117,6 +117,7 @@ def submit_trial_check(account_id: int) -> dict:
     def run_captured() -> None:
         claim = current
         proxy = claim["proxy"]
+        last_result = None
         for attempt in range(_TRIAL_PROXY_RETRIES):
             try:
                 result = trial_check.check_zero_trial(
@@ -125,6 +126,7 @@ def submit_trial_check(account_id: int) -> dict:
                 )
             except Exception as exc:
                 result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}", "trial_proxy_country": str(proxy.get("country") or "").upper()}
+            last_result = result
             store.finish_trial_check(account_id, result)
             store.mark_detection_proxy_result(int(proxy.get("id") or 0), result)
             if result.get("trial_zero_trial_eligible") is True:
@@ -144,6 +146,12 @@ def submit_trial_check(account_id: int) -> dict:
                 break
             claim = next_claim
             proxy = claim["proxy"]
+        # Every retry claims the account again, so an exhausted loop would
+        # otherwise leave the final claim stuck in ``running`` forever.
+        if last_result is not None:
+            latest = store.get_success_account_context(account_id) or {}
+            if latest.get("trial_check_status") in {"queued", "running"}:
+                store.finish_trial_check(account_id, last_result)
     try:
         _TRIAL_EXECUTOR.submit(run_captured)
     except Exception as exc:

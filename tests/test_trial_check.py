@@ -220,6 +220,39 @@ def test_recover_interrupted_trial_check(tmp_path):
     assert "重新检测" in account["trial_check_error"]
 
 
+def test_exhausted_proxy_retries_finish_with_last_result(tmp_path):
+    with (
+        patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"),
+        patch.object(store, "_REPLACEMENTS", tmp_path / "替换邮箱.json"),
+        patch.object(store, "_TASKS", tmp_path / "rebind_tasks.json"),
+        patch.object(store, "_PROXIES", tmp_path / "换绑代理.json"),
+        patch.object(store, "_DETECTION_PROXIES", tmp_path / "资格检测代理.json"),
+        patch.object(worker, "_TRIAL_PROXY_RETRIES", 2),
+        patch.object(worker.trial_check, "check_zero_trial", return_value={
+            "ok": True, "checked_at": "2026-08-29T12:00:00",
+            "trial_zero_trial_eligible": False, "plus_trial_offer_kind": "none",
+        }),
+    ):
+        store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+        store.import_replacement_emails("new@example.com----https://mail.example/code")
+        store.import_detection_proxies(
+            "ID|socks5h://one.example:3000\nID|socks5h://two.example:3000"
+        )
+        task = store.reserve_batch()[0]
+        store.finish_success(task["id"], {"email": "new@example.com", "access_token": "at-new"})
+        worker.submit_trial_check(1)
+
+        import time
+        for _ in range(50):
+            account = store.get_success_account_context(1)
+            if account and account.get("trial_check_status") == "success":
+                break
+            time.sleep(0.02)
+
+    assert account["trial_check_status"] == "success"
+    assert account["trial_zero_trial_eligible"] is False
+
+
 def test_refreshing_at_resets_trial_state_for_followup_auto_check(tmp_path):
     with patch.object(store, "_ACCOUNTS", tmp_path / "accounts.json"):
         row = {
