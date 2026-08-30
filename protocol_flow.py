@@ -27,6 +27,10 @@ from rebind_core.mfa_login import MfaLoginError, login_with_password_and_totp  #
 from rebind_core.pipeline import RebindResult, run_rebind_email  # noqa: E402
 
 
+class ProtocolSessionFailure(RuntimeError):
+    """OAuth state expired before login completed; retry with a fresh session/route."""
+
+
 def _stop(stop_check: Callable[[], bool]) -> None:
     if stop_check():
         raise TaskStopRequested("用户已请求停止")
@@ -44,12 +48,20 @@ def _raise_upstream_failure(result: RebindResult, new_email: str) -> None:
     code = str(result.code or "REBIND_FAILED")
     message = f"{code}: {result.message}"
     steps = {str(item.get("step") or "") for item in (result.trace or [])}
+    lower = message.lower()
+    if (
+        "invalid_state" in lower
+        or "sign-in session is no longer valid" in lower
+        or "auth session" in lower and "失效" in message
+    ):
+        raise ProtocolSessionFailure(message)
     if _looks_like_proxy_failure(message):
         raise ProxyFailure(message)
     if code == "MAIL_TIMEOUT":
         raise ReplacementEmailFailure("otp_unavailable", message)
-    if code == "BEGIN_FAILED" and any(marker in message.lower() for marker in (
-        "already", "exists", "in use", "occupied", "占用", "已使用",
+    if any(marker in lower for marker in (
+        "email already linked to another account", "email already in use",
+        "already linked", "already exists", "occupied", "占用", "已使用",
     )):
         raise ReplacementEmailFailure("email_in_use", message)
     if "verify" in steps or code == "RELOGIN_FAILED":

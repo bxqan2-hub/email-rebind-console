@@ -421,6 +421,21 @@ def _run(task_id: int) -> None:
             )
             active_proxy = None
             continue
+        except protocol_flow.ProtocolSessionFailure as exc:
+            if store.is_task_stop_requested(current_task_id):
+                store.finish_stopped(current_task_id)
+                return
+            message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            logger.warning(
+                "纯协议 OAuth 会话失效，重建会话并切换代理：task=%s proxy_id=%s reason=%s",
+                current_task_id, active_proxy.get("id"), message,
+            )
+            store.update_task(
+                current_task_id, status="running", stage="protocol_session_failed",
+                message=f"{proxy_display} 的 OAuth 会话已失效；正在用下一条代理重建完整登录会话",
+            )
+            active_proxy = None
+            continue
         except roxy_flow.ReplacementEmailFailure as exc:
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
             if store.is_task_stop_requested(current_task_id):

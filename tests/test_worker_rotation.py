@@ -129,6 +129,37 @@ class WorkerRotationTests(unittest.TestCase):
                 self.assertEqual(tasks[1]["retry_of_task_id"], tasks[0]["id"])
                 self.assertEqual(tasks[1]["stage"], "protocol_verified")
 
+    def test_invalid_oauth_state_switches_proxy_without_disabling_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_random = Mock()
+            fake_random.choice.side_effect = lambda rows: rows[0]
+            seen = []
+
+            def perform(**kwargs):
+                seen.append(kwargs["proxy_url"])
+                if len(seen) == 1:
+                    raise worker.protocol_flow.ProtocolSessionFailure("HTTP 409 invalid_state")
+                return {"email": kwargs["new_email"], "access_token": "at-new"}
+
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(store, "_PROXY_RANDOM", fake_random), \
+                    patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", side_effect=perform):
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                store.import_proxies("http://first.example:8080\nhttp://second.example:8080")
+
+                worker._run(store.reserve_batch()[0]["id"])
+
+                self.assertEqual(len(seen), 2)
+                self.assertNotEqual(seen[0], seen[1])
+                self.assertTrue(all(row["status"] == "available" for row in store.list_proxies()))
+                self.assertEqual(store.list_accounts()[0]["status"], "success")
+
     def test_transient_retries_are_bounded_and_release_replacement(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1,45 +1,166 @@
 # -*- coding: utf-8 -*-
-"""Normalize imported TOTP secrets and URLs that embed a TOTP secret."""
+"""对上游 chatgpt-rebind-standalone 原生流水线的薄适配层。"""
 from __future__ import annotations
 
-import base64
-import re
-from urllib.parse import parse_qs, unquote, urlsplit
+import json
+import sys
+from pathlib import Path
+from typing import Callable
 
-_BASE32_RE = re.compile(r"^[A-Z2-7]+=*$", re.IGNORECASE)
+import settings
+from roxy_flow import (
+    ProxyFailure,
+    RebindOutcomeUnknown,
+    ReplacementEmailFailure,
+    TaskStopRequested,
+)
+
+UPSTREAM_URL = "https://github.com/MervLis/chatgpt-rebind-standalone"
+UPSTREAM_COMMIT = "e27b3217dbfddab19e83dc57ab225173877e4663"
+UPSTREAM_ROOT = Path(__file__).resolve().parent / "integrations" / "chatgpt_rebind_standalone"
+
+# 上游源码保持原目录、原 import 和原实现；这里只把其项目根加入模块搜索路径。
+if str(UPSTREAM_ROOT) not in sys.path:
+    sys.path.insert(0, str(UPSTREAM_ROOT))
+
+from rebind_core.mfa_login import MfaLoginError, login_with_password_and_totp  # noqa: E402
+from rebind_core.pipeline import RebindResult, run_rebind_email  # noqa: E402
 
 
-def _validated_secret(value: str) -> str:
-    secret = re.sub(r"[\s-]+", "", unquote(str(value or ""))).upper().rstrip("=")
-    if len(secret) < 16 or not _BASE32_RE.fullmatch(secret):
-        raise ValueError("2FA 内容不是有效的 Base32 Secret")
+class ProtocolSessionFailure(RuntimeError):
+    """OAuth state expired before login completed; retry with a fresh session/route."""
+
+
+def _stop(stop_check: Callable[[], bool]) -> None:
+    if stop_check():
+        raise TaskStopRequested("用户已请求停止")
+
+
+def _looks_like_proxy_failure(message: str) -> bool:
+    text = str(message or "").lower()
+    return any(marker in text for marker in (
+        "proxy", "socks", "connection", "connect", "timeout", "timed out",
+        "resolve", "network", "tls", "ssl",
+    ))
+
+
+def _raise_upstream_failure(result: RebindResult, new_email: str) -> None:
+    code = str(result.code or "REBIND_FAILED")
+    message = f"{code}: {result.message}"
+    steps = {str(item.get("step") or "") for item in (result.trace or [])}
+    lower = message.lower()
+    if (
+        "invalid_state" in lower
+        or "sign-in session is no longer valid" in lower
+        or "auth session" in lower and "失效" in message
+    ):
+        raise ProtocolSessionFailure(message)
+    if _looks_like_proxy_failure(message):
+        raise ProxyFailure(message)
+    if code == "MAIL_TIMEOUT":
+        raise ReplacementEmailFailure("otp_unavailable", message)
+    if any(marker in lower for marker in (
+        "email already linked to another account", "email already in use",
+        "already linked", "already exists", "occupied", "占用", "已使用",
+    )):
+        raise ReplacementEmailFailure("email_in_use", message)
+    if "verify" in steps or code == "RELOGIN_FAILED":
+        raise RebindOutcomeUnknown(new_email, message)
+    raise RuntimeError(message)
+
+
+def run_upstream_rebind(
+    *,
+    old_email: str,
+    new_email: str,
+    password: str,
+    totp_secret: str,
+    api_url: str,
+    proxy_url: str,
+    progress: Callable[[str, str], None] | None = None,
+    stop_check: Callable[[], bool] | None = None,
+) -> dict:
+    """原样调用上游 ``run_rebind_email``，仅把结果接回分站任务模型。"""
+    progress = progress or (lambda _stage, _message: None)
+    stop_check = stop_check or (lambda: False)
+    _stop(stop_check)
+    progress("protocol_upstream", "调用 chatgpt-rebind-standalone 原生纯协议流水线")
+    result = run_rebind_email(
+        old_email=old_email,
+        password=password,
+        totp_secret=totp_secret,
+        new_email=new_email,
+        mail_api=api_url,
+        proxy=proxy_url or None,
+        mail_timeout=float(settings.OTP_MAX_WAIT),
+    )
+    # Do not abort after the upstream pipeline returns.  The standalone flow
+    # may already have committed the email change and exported the new AT;
+    # turning a user stop request at this boundary into ``stopped`` would hide
+    # a successful upstream result and leave the local task state stale.
+    if not result.ok:
+        _raise_upstream_failure(result, new_email)
+
+    bundle_path = Path(str(result.bundle_path or ""))
+    if not bundle_path.is_file():
+        raise RebindOutcomeUnknown(new_email, "上游返回成功，但 login_bundle 文件不存在")
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    session_email = str(bundle.get("email") or result.session_email or new_email).strip()
+    access_token = str(bundle.get("access_token") or "").strip()
+    if not access_token:
+        raise RebindOutcomeUnknown(new_email, "上游返回成功，但 login_bundle 缺少 access_token")
+
+    progress("protocol_verified", "上游原生纯协议换绑、重登和 AT 导出完成")
+    return {
+        "email": session_email,
+        "access_token": access_token,
+        "session": bundle.get("auth_session") or {},
+        "protocol_engine": "chatgpt-rebind-standalone/run_rebind_email",
+        "protocol_upstream_commit": UPSTREAM_COMMIT,
+        "protocol_bundle_path": str(bundle_path),
+        "roxy_profile_id": "",
+        "roxy_browser_status": "not_opened",
+    }
+
+
+def refresh_access_token_protocol(
+    *,
+    email: str,
+    password: str,
+    totp_secret: str,
+    proxy_url: str = "",
+    progress: Callable[[str, str], None] | None = None,
+) -> dict:
+    """不打开 Roxy 时，用上游纯协议登录一次并导出新的 AT。"""
+    progress = progress or (lambda _stage, _message: None)
+    target_email = str(email or "").strip()
+    progress("protocol_at_refresh", f"未检测到 Roxy 窗口，使用纯协议登录 {target_email} 获取 AT")
     try:
-        base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
-    except Exception as exc:
-        raise ValueError("2FA 内容不是有效的 Base32 Secret") from exc
-    return secret
-
-
-def resolve_totp_secret(value: str) -> str:
-    """Return a Base32 secret from a raw secret, otpauth URI, or 2FA URL.
-
-    Supported HTTP URL forms include a Base32 final path segment (the format
-    used by 2fa.fb.tools) and common ``secret`` query parameters.
-    """
-    raw = str(value or "").strip()
-    if not raw:
-        raise ValueError("未配置 2FA Secret 或 2FA URL")
-    parsed = urlsplit(raw)
-    if parsed.scheme.lower() in {"http", "https", "otpauth"}:
-        query = parse_qs(parsed.query)
-        for key in ("secret", "totp_secret", "key"):
-            values = query.get(key) or []
-            if values:
-                return _validated_secret(values[0])
-        for segment in reversed([part for part in parsed.path.split("/") if part]):
-            try:
-                return _validated_secret(segment)
-            except ValueError:
-                continue
-        raise ValueError("2FA URL 中没有可识别的 Base32 Secret")
-    return _validated_secret(raw)
+        login = login_with_password_and_totp(
+            target_email,
+            str(password or "").strip(),
+            str(totp_secret or "").strip(),
+            proxy=str(proxy_url or "").strip() or None,
+        )
+    except MfaLoginError:
+        raise
+    observed = str(login.result.email or login.email or target_email).strip()
+    if target_email and observed.lower() != target_email.lower():
+        raise RuntimeError(f"纯协议登录邮箱不匹配：期望 {target_email}，实际 {observed or '空'}")
+    access_token = str(login.access_token or "").strip()
+    if not access_token:
+        raise RuntimeError("纯协议登录完成，但未返回 access_token")
+    progress("protocol_at_refreshed", "纯协议登录完成，新的 AT 已取得")
+    return {
+        "email": observed or target_email,
+        "access_token": access_token,
+        "session": {
+            "accessToken": access_token,
+            "email": observed or target_email,
+            "sessionToken": login.session_token,
+        },
+        "protocol_engine": "chatgpt-rebind-standalone/login_with_password_and_totp",
+        "protocol_upstream_commit": UPSTREAM_COMMIT,
+        "roxy_profile_id": "",
+        "roxy_browser_status": "not_opened",
+    }

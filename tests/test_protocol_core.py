@@ -63,6 +63,34 @@ class ProtocolFlowTests(unittest.TestCase):
                 proxy_url="http://proxy.example:8080",
             )
 
+    def test_invalid_oauth_state_requests_fresh_protocol_session(self):
+        failure = protocol_flow.RebindResult(
+            ok=False, code="EXPORT_FAILED",
+            message="authorize/continue HTTP 409 invalid_state: sign-in session is no longer valid",
+        )
+        with patch.object(protocol_flow, "run_rebind_email", return_value=failure), \
+                self.assertRaises(protocol_flow.ProtocolSessionFailure):
+            protocol_flow.run_upstream_rebind(
+                old_email="old@example.com", new_email="new@example.com",
+                password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                api_url="https://mail.example/code",
+                proxy_url="http://proxy.example:8080",
+            )
+
+    def test_already_linked_replacement_is_rotated(self):
+        failure = protocol_flow.RebindResult(
+            ok=False, code="REAUTH_FAILED",
+            message='begin 需要 reauth: HTTP 403 {"detail":"Email already linked to another account"}',
+        )
+        with patch.object(protocol_flow, "run_rebind_email", return_value=failure), \
+                self.assertRaisesRegex(protocol_flow.ReplacementEmailFailure, "already linked"):
+            protocol_flow.run_upstream_rebind(
+                old_email="old@example.com", new_email="new@example.com",
+                password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                api_url="https://mail.example/code",
+                proxy_url="http://proxy.example:8080",
+            )
+
     def test_protocol_at_refresh_logs_in_once_and_returns_not_opened_result(self):
         login = Mock()
         login.email = "new@example.com"
