@@ -1,4 +1,4 @@
-Changed branch/field: Refresh AT now reloads the retained Roxy page before reading /api/auth/session; if the returned JWT is unchanged, worker performs an authoritative /backend-api/me validity check and rejects invalid/uncertain results instead of reporting refresh success. The two observed account records were reset to refresh failed for a new attempt.
+Changed branch/field: password_totp input now accepts a raw Base32 secret, otpauth URI, or HTTP(S) 2FA URL whose query/path embeds the Base32 secret. worker resolves the URL before protocol, browser, retry-login, and AT-refresh flows. The three observed 2fa.fb.tools URLs resolve to 32-character Base32 secrets and generate six-digit TOTP codes.
 
 Artifacts:
 - MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\MODIFIED_FILE
@@ -7,18 +7,18 @@ Artifacts:
 - ROLLBACK.sh: C:\Users\Administrator\Desktop\email-rebind-console\ROLLBACK.sh
 
 BASELINE command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-BASELINE input: commit b0e4c62 before refresh-validation edits
-BASELINE literal result: 115 passed, 5 subtests passed in 5.20s
+BASELINE input: commit 093dadc before 2FA URL support
+BASELINE literal result: 116 passed, 5 subtests passed in 9.19s
 BASELINE exit status: 0
 
 MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-MODIFIED input: working tree with Roxy page reload and same-token validity verification
-MODIFIED literal result: 116 passed, 5 subtests passed in 9.19s
+MODIFIED input: working tree with 2FA URL resolution and five added tests
+MODIFIED literal result: 121 passed, 5 subtests passed in 9.28s
 MODIFIED exit status: 0
 
 ROLLBACK command: bash ROLLBACK.sh verification/rollback_tmp/target verification/rollback_tmp/baseline
-ROLLBACK input: temporary copy of MODIFIED_FILE and worker.py from commit b0e4c62
+ROLLBACK input: temporary copy of MODIFIED_FILE and empty baseline file (totp_source.py did not exist at baseline)
 ROLLBACK literal result: rollback restored verification/rollback_tmp/target from verification/rollback_tmp/baseline; SHA256 byte comparison matched
 ROLLBACK exit status: 0
 
-Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed worker.py copy.
+Restored behavior/status: rollback test copy equals empty baseline; MODIFIED_FILE remains the changed totp_source.py copy.

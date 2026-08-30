@@ -403,6 +403,31 @@ class WorkerRotationTests(unittest.TestCase):
                 self.assertEqual(account["roxy_browser_status"], "not_opened")
                 self.assertFalse(account.get("roxy_profile_id"))
 
+    def test_worker_extracts_totp_secret_from_2fa_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(worker.settings, "MAX_PROXY_ATTEMPTS", 5), \
+                    patch.object(worker.protocol_flow, "run_upstream_rebind", return_value={
+                        "email": "new@example.com", "access_token": "at-new",
+                    }) as perform:
+                store.import_source_accounts(
+                    "old@example.com----Password!----"
+                    "https://2fa.example/JBSWY3DPEHPK3PXP"
+                )
+                store.import_replacement_emails("new@example.com----https://mail.example/new")
+                store.import_proxies("http://proxy.example:8080")
+
+                worker._run(store.reserve_batch()[0]["id"])
+
+                self.assertEqual(
+                    perform.call_args.kwargs["totp_secret"],
+                    "JBSWY3DPEHPK3PXP",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

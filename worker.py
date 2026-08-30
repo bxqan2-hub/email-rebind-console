@@ -12,6 +12,7 @@ import protocol_flow
 import settings
 import store
 import trial_check
+from totp_source import resolve_totp_secret
 
 logger = logging.getLogger(__name__)
 _LOCK = threading.RLock()
@@ -58,6 +59,8 @@ def _refresh_access_token(account_id: int) -> None:
     expected_email = str(account.get("new_email") or account.get("current_email") or "").strip()
     roxy_open = account.get("roxy_browser_status") == "open" and bool(profile_id)
     try:
+        raw_totp = str(account.get("totp_secret") or "").strip()
+        totp_secret = resolve_totp_secret(raw_totp) if raw_totp else ""
         if roxy_open:
             logger.info("成功账号 #%s 检测到 Roxy 窗口，复用窗口更新 AT", account_id)
             result = roxy_flow.refresh_retained_access_token(profile_id, expected_email)
@@ -71,7 +74,7 @@ def _refresh_access_token(account_id: int) -> None:
             result = protocol_flow.refresh_access_token_protocol(
                 email=expected_email,
                 password=str(account.get("password") or ""),
-                totp_secret=str(account.get("totp_secret") or ""),
+                totp_secret=totp_secret,
                 proxy_url=proxy_url,
             )
         previous_token = str(account.get("access_token") or "").strip()
@@ -339,11 +342,13 @@ def _run(task_id: int) -> None:
             )
 
         try:
+            raw_totp = str(account.get("totp_secret") or "").strip()
+            totp_secret = resolve_totp_secret(raw_totp) if raw_totp else ""
             if login_only:
                 result = roxy_flow.perform_replacement_login(
                     new_email=str(replacement.get("email") or account.get("current_email") or ""),
                     password=str(account.get("password") or ""),
-                    totp_secret=str(account.get("totp_secret") or ""),
+                    totp_secret=totp_secret,
                     api_url=str(replacement.get("api_url") or ""),
                     auth_method=str(account.get("auth_method") or ""),
                     proxy_url=str(active_proxy.get("proxy_url") or ""),
@@ -357,7 +362,7 @@ def _run(task_id: int) -> None:
                     old_email=str(account.get("old_email") or ""),
                     new_email=str(replacement.get("email") or ""),
                     password=str(account.get("password") or ""),
-                    totp_secret=str(account.get("totp_secret") or ""),
+                    totp_secret=totp_secret,
                     source_api_url=str(account.get("api_url") or ""),
                     auth_method=str(account.get("auth_method") or ""),
                     api_url=str(replacement.get("api_url") or ""),
@@ -372,7 +377,7 @@ def _run(task_id: int) -> None:
                     old_email=str(account.get("old_email") or ""),
                     new_email=str(replacement.get("email") or ""),
                     password=str(account.get("password") or ""),
-                    totp_secret=str(account.get("totp_secret") or ""),
+                    totp_secret=totp_secret,
                     api_url=str(replacement.get("api_url") or ""),
                     proxy_url=str(active_proxy.get("proxy_url") or ""),
                     progress=progress,

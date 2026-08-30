@@ -42,7 +42,7 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(result["inserted"], 2)
                 self.assertEqual(result["invalid"], [{
                     "line": 3,
-                    "reason": "原邮箱需要：邮箱----http(s)://API取码地址，或 邮箱----密码----MFA Secret",
+                    "reason": "原邮箱需要：邮箱----http(s)://API取码地址，或 邮箱----密码----MFA Secret/2FA URL",
                 }])
                 accounts = store.list_accounts()
                 self.assertEqual([row["old_email"] for row in accounts], ["old@example.com", "old2@example.com"])

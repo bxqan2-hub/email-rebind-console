@@ -593,7 +593,7 @@ def import_source_accounts(text: str) -> dict:
             continue
         invalid.append({
             "line": number,
-            "reason": "原邮箱需要：邮箱----http(s)://API取码地址，或 邮箱----密码----MFA Secret",
+            "reason": "原邮箱需要：邮箱----http(s)://API取码地址，或 邮箱----密码----MFA Secret/2FA URL",
         })
 
     with _LOCK:
