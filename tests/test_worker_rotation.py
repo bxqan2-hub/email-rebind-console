@@ -332,6 +332,41 @@ class WorkerRotationTests(unittest.TestCase):
                 )
                 self.assertEqual(store.list_accounts()[0]["roxy_browser_status"], "open")
 
+    def test_same_roxy_token_must_pass_validity_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            token = "header.payload.signature"
+            with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
+                    patch.object(store, "_REPLACEMENTS", root / "replacements.json"), \
+                    patch.object(store, "_TASKS", root / "tasks.json"), \
+                    patch.object(store, "_PROXIES", root / "proxies.json"), \
+                    patch.object(worker.roxy_flow, "refresh_retained_access_token", return_value={
+                        "email": "new@example.com", "access_token": token,
+                        "roxy_profile_id": "profile-1",
+                    }), \
+                    patch.object(worker.trial_check, "check_access_token_validity", return_value={
+                        "outcome": "invalid_confirmed", "valid": False, "error": "HTTP 401",
+                    }) as validity, \
+                    patch.object(worker, "submit_trial_check") as submit_trial, \
+                    patch.object(worker.roxy_flow, "retained_profile_is_connected", return_value=True):
+                store.import_source_accounts("old@example.com----Password!----JBSWY3DPEHPK3PXP")
+                store.import_replacement_emails("new@example.com----https://mail.example/code")
+                task = store.reserve_batch()[0]
+                store.finish_success(task["id"], {
+                    "email": "new@example.com", "access_token": token,
+                    "roxy_profile_id": "profile-1", "roxy_browser_status": "open",
+                })
+                account_id = store.list_accounts()[0]["id"]
+                self.assertIsNotNone(store.begin_access_token_refresh(account_id))
+
+                worker._refresh_access_token(account_id)
+
+                account = store.list_accounts()[0]
+                validity.assert_called_once_with(token)
+                submit_trial.assert_not_called()
+                self.assertEqual(account["at_refresh_status"], "failed")
+                self.assertIn("未通过有效性确认", account["at_refresh_error"])
+
     def test_success_account_refresh_without_roxy_uses_one_protocol_login(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

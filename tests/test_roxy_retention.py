@@ -19,6 +19,9 @@ class FakeDriver:
     def quit(self):
         self.events.append("driver.quit")
 
+    def refresh(self):
+        self.events.append("driver.refresh")
+
 
 class FakeClient:
     def __init__(self, events, profile_proxy=None):
@@ -189,6 +192,7 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertEqual(result["access_token"], "at-plus")
         self.assertEqual(result["email"], "new@example.com")
         self.assertEqual(result["roxy_cdp_port"], 9333)
+        self.assertIn("driver.refresh", events)
         self.assertNotIn("driver.quit", events)
 
     def test_refresh_reopens_same_profile_after_service_restart(self):

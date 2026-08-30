@@ -74,6 +74,17 @@ def _refresh_access_token(account_id: int) -> None:
                 totp_secret=str(account.get("totp_secret") or ""),
                 proxy_url=proxy_url,
             )
+        previous_token = str(account.get("access_token") or "").strip()
+        refreshed_token = str(result.get("access_token") or "").strip()
+        if refreshed_token == previous_token and refreshed_token.count(".") == 2:
+            # A same-token response is only accepted when the token still
+            # answers the authoritative /backend-api/me validity check.
+            check = trial_check.check_access_token_validity(refreshed_token)
+            if check.get("valid") is not True:
+                raise RuntimeError(
+                    f"Roxy session 返回的 AT 未通过有效性确认："
+                    f"{check.get('error') or check.get('outcome') or 'check_error'}"
+                )
         store.finish_access_token_refresh(account_id, result)
         submit_trial_check(account_id)
     except Exception as exc:  # noqa: BLE001 - 操作结果必须回写页面状态

@@ -1,4 +1,4 @@
-Changed branch/field: begin_trial_check now randomly selects from available qualification proxies via _PROXY_RANDOM.choice; successful-proxy priority was removed. Retry calls pass exclude_proxy_ids so an account changes proxy when alternatives exist, while retaining the five-proxy limit.
+Changed branch/field: Refresh AT now reloads the retained Roxy page before reading /api/auth/session; if the returned JWT is unchanged, worker performs an authoritative /backend-api/me validity check and rejects invalid/uncertain results instead of reporting refresh success. The two observed account records were reset to refresh failed for a new attempt.
 
 Artifacts:
 - MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\MODIFIED_FILE
@@ -6,19 +6,19 @@ Artifacts:
 - VERIFICATION.txt: C:\Users\Administrator\Desktop\email-rebind-console\VERIFICATION.txt
 - ROLLBACK.sh: C:\Users\Administrator\Desktop\email-rebind-console\ROLLBACK.sh
 
-BASELINE command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests/test_trial_check.py
-BASELINE input: commit 7f7b57e before random-selection change
-BASELINE literal result: 14 passed in 0.36s
+BASELINE command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
+BASELINE input: commit b0e4c62 before refresh-validation edits
+BASELINE literal result: 115 passed, 5 subtests passed in 5.20s
 BASELINE exit status: 0
 
-MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests/test_trial_check.py
-MODIFIED input: working tree with random proxy selection and updated tests
-MODIFIED literal result: 14 passed in 0.36s
+MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
+MODIFIED input: working tree with Roxy page reload and same-token validity verification
+MODIFIED literal result: 116 passed, 5 subtests passed in 9.19s
 MODIFIED exit status: 0
 
 ROLLBACK command: bash ROLLBACK.sh verification/rollback_tmp/target verification/rollback_tmp/baseline
-ROLLBACK input: temporary copy of MODIFIED_FILE and store.py from commit 7f7b57e
+ROLLBACK input: temporary copy of MODIFIED_FILE and worker.py from commit b0e4c62
 ROLLBACK literal result: rollback restored verification/rollback_tmp/target from verification/rollback_tmp/baseline; SHA256 byte comparison matched
 ROLLBACK exit status: 0
 
-Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed store.py copy.
+Restored behavior/status: rollback test copy equals baseline; MODIFIED_FILE remains the changed worker.py copy.

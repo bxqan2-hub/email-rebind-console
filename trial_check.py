@@ -19,6 +19,15 @@ def _load_main_modules():
     return detection_proxy, check_account_plan
 
 
+def check_access_token_validity(access_token: str) -> dict:
+    """Validate a same-token refresh through the main project's /me check."""
+    root = str(settings.MAIN_SITE_PATH)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from core.at_validity import check_access_token_validity as check  # type: ignore
+    return check(str(access_token or "").strip(), max_attempts=1, retry_delay=0)
+
+
 def inspect_detection_proxy(proxy_spec: str) -> dict:
     detection_proxy, _check_account_plan = _load_main_modules()
     return detection_proxy.inspect_static_proxy(str(proxy_spec or "").strip())

@@ -171,6 +171,11 @@ def refresh_retained_access_token(profile_id: str, expected_email: str) -> dict:
     with record["lock"]:
         _client_type, _build, _center, fetch_session, _safe_get, _submit_email, _probe_driver_exit = _load_main_roxy()
         driver = record["driver"]
+        try:
+            driver.refresh()
+            time.sleep(2)
+        except Exception:
+            logger.debug("Roxy refresh 页面刷新失败，继续读取 session", exc_info=True)
         session = fetch_session(
             driver, timeout=45, auto_jump_wait=3, refresh_attempts=1,
         )
