@@ -1,4 +1,4 @@
-Changed branch/field: the original-account pairing toolbar now includes deleteSelectedAccounts; it is enabled only when original-account checkboxes are selected. deleteSelectedSourceAccounts confirms once, deletes each selected idle account through the existing guarded account endpoint, retains blocked selections, reports deleted/blocked counts, and reloads pairing state.
+Changed branch/field: completion-result “visible rows” now controls the scroll viewport height rather than slicing task data. renderRecent renders every result, restores scroll position across the three-second refresh, shows a total/scroll hint, and select-all covers all displayed results. The result frame has a stable styled scrollbar and configurable height.
 
 Artifacts:
 - MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\MODIFIED_FILE
@@ -7,17 +7,17 @@ Artifacts:
 - ROLLBACK.sh: C:\Users\Administrator\Desktop\email-rebind-console\ROLLBACK.sh
 
 BASELINE command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-BASELINE input: commit fb65002 before selected-original-account delete button
-BASELINE literal result: 128 passed, 5 subtests passed in 9.54s
+BASELINE input: commit bd01c6e before scrollable completion-result frame
+BASELINE literal result: 128 passed, 5 subtests passed in 9.25s
 BASELINE exit status: 0
 
 MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests
-MODIFIED input: working tree with batch selected-original-account deletion UI
-MODIFIED literal result: 128 passed, 5 subtests passed in 9.25s
+MODIFIED input: working tree with all-result rendering, configurable viewport, scroll preservation, and scrollbar styling
+MODIFIED literal result: 128 passed, 5 subtests passed in 9.29s
 MODIFIED exit status: 0
 
 ROLLBACK command: bash ROLLBACK.sh verification/rollback_tmp/target verification/rollback_tmp/baseline
-ROLLBACK input: temporary copy of MODIFIED_FILE and static/app.js from commit fb65002
+ROLLBACK input: temporary copy of MODIFIED_FILE and static/app.js from commit bd01c6e
 ROLLBACK literal result: rollback restored verification/rollback_tmp/target from verification/rollback_tmp/baseline; SHA256 byte comparison matched
 ROLLBACK exit status: 0
 

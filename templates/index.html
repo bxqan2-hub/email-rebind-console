@@ -52,7 +52,8 @@
       </article>
 
       <article class="card result-card">
-        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>按原邮箱导入类型轮转：密码账号复制“原邮箱----换绑后邮箱----密码----2FA----AT”；URL 账号复制“原邮箱----换绑后邮箱----替换邮箱URL----AT”。可选择结果记录后批量清理。</p></div><div class="actions"><label>显示条数 <input type="number" id="resultVisibleRows" min="1" max="100" value="10" aria-label="结果显示条数"></label><label><input type="checkbox" id="selectResultAll"> 全选结果</label><button class="btn ghost" id="copyExport">复制完成结果</button><button class="btn danger" id="cleanupSelectedResults" disabled>清理所选结果</button></div></div>
+        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>按原邮箱导入类型轮转：密码账号复制“原邮箱----换绑后邮箱----密码----2FA----AT”；URL 账号复制“原邮箱----换绑后邮箱----替换邮箱URL----AT”。全部结果保留在框内，可滚动查看并批量清理。</p></div><div class="actions"><label>可视行数 <input type="number" id="resultVisibleRows" min="1" max="100" value="10" aria-label="结果框可视行数"></label><label><input type="checkbox" id="selectResultAll"> 全选结果</label><button class="btn ghost" id="copyExport">复制完成结果</button><button class="btn danger" id="cleanupSelectedResults" disabled>清理所选结果</button></div></div>
+        <div class="result-scroll-hint" id="resultScrollHint"></div>
         <div id="recentTasks" class="task-list result-task-list"></div>
       </article>
 
