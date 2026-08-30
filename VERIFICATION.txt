@@ -1,4 +1,4 @@
-Changed branch/field: begin_trial_check now chooses a random available detection proxy via _PROXY_RANDOM.choice, without preferring previously successful proxies; retry calls exclude already attempted proxy IDs when alternatives exist, so each account still changes proxy before the five-attempt cap.
+Changed branch/field: begin_trial_check now randomly selects from available qualification proxies via _PROXY_RANDOM.choice; successful-proxy priority was removed. Retry calls pass exclude_proxy_ids so an account changes proxy when alternatives exist, while retaining the five-proxy limit.
 
 Artifacts:
 - MODIFIED_FILE: C:\Users\Administrator\Desktop\email-rebind-console\MODIFIED_FILE
@@ -12,7 +12,7 @@ BASELINE literal result: 14 passed in 0.36s
 BASELINE exit status: 0
 
 MODIFIED command: C:\Users\Administrator\Desktop\turb-gpt-free-register\.venv\Scripts\python.exe -m pytest -q tests/test_trial_check.py
-MODIFIED input: working tree with random proxy selection and updated regression tests
+MODIFIED input: working tree with random proxy selection and updated tests
 MODIFIED literal result: 14 passed in 0.36s
 MODIFIED exit status: 0
 
