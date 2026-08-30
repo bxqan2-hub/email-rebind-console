@@ -320,6 +320,8 @@ class AppTests(unittest.TestCase):
         self.assertIn("data-delete-proxy", script)
         self.assertIn('id="deleteAllProxies"', html)
         self.assertIn("data-delete-account", script)
+        self.assertIn("deleteSelectedSourceAccounts", script)
+        self.assertIn('id="deleteSelectedAccounts"', html)
         self.assertIn("data-retry-account", script)
         self.assertIn("自动重试中", script)
         self.assertIn("失败重试", script)
