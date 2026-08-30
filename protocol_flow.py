@@ -40,7 +40,8 @@ def _looks_like_proxy_failure(message: str) -> bool:
     text = str(message or "").lower()
     return any(marker in text for marker in (
         "proxy", "socks", "connection", "connect", "timeout", "timed out",
-        "resolve", "network", "tls", "ssl",
+        "resolve", "network", "tls", "ssl", "rate_limit_exceeded",
+        "too many requests", "http 429",
     ))
 
 
@@ -53,6 +54,8 @@ def _raise_upstream_failure(result: RebindResult, new_email: str) -> None:
         "invalid_state" in lower
         or "sign-in session is no longer valid" in lower
         or "auth session" in lower and "失效" in message
+        or "登录结果缺少 access_token" in message
+        or "login result missing access_token" in lower
     ):
         raise ProtocolSessionFailure(message)
     if _looks_like_proxy_failure(message):

@@ -91,6 +91,33 @@ class ProtocolFlowTests(unittest.TestCase):
                 proxy_url="http://proxy.example:8080",
             )
 
+    def test_rate_limited_authorize_continue_disables_current_proxy(self):
+        failure = protocol_flow.RebindResult(
+            ok=False, code="EXPORT_FAILED",
+            message="authorize/continue rate_limit_exceeded: HTTP 429 Too many requests",
+        )
+        with patch.object(protocol_flow, "run_rebind_email", return_value=failure), \
+                self.assertRaises(protocol_flow.ProxyFailure):
+            protocol_flow.run_upstream_rebind(
+                old_email="old@example.com", new_email="new@example.com",
+                password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                api_url="https://mail.example/code",
+                proxy_url="http://proxy.example:8080",
+            )
+
+    def test_missing_access_token_rebuilds_protocol_session(self):
+        failure = protocol_flow.RebindResult(
+            ok=False, code="LOGIN_FAILED", message="登录结果缺少 access_token",
+        )
+        with patch.object(protocol_flow, "run_rebind_email", return_value=failure), \
+                self.assertRaises(protocol_flow.ProtocolSessionFailure):
+            protocol_flow.run_upstream_rebind(
+                old_email="old@example.com", new_email="new@example.com",
+                password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
+                api_url="https://mail.example/code",
+                proxy_url="http://proxy.example:8080",
+            )
+
     def test_protocol_at_refresh_logs_in_once_and_returns_not_opened_result(self):
         login = Mock()
         login.email = "new@example.com"
