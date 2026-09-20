@@ -4,7 +4,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import unquote
 
 from .paths import ensure_icloud_on_path
@@ -212,6 +212,13 @@ def _finish_to_session(auth: AuthFlow, continue_url: str) -> AuthResult:
         # last resort: try client auth dump / reauthorize helpers if available
         raise MfaLoginError("LOGIN_FAILED", "MFA 后缺少 continue_url/callback")
     callback_url, final_url = auth.follow_redirect_chain(continue_url)
+    # 换绑只需要 Web session/AT；已有 AT 时跳过多种 OAuth 交换探测。
+    try:
+        auth.get_auth_session()
+    except Exception:
+        pass
+    if auth.result.access_token:
+        return auth.result
     target = callback_url or continue_url
     try:
         if target and hasattr(auth, "oauth_token_exchange"):
@@ -237,11 +244,13 @@ def login_with_password_and_totp(
     totp_secret: str,
     *,
     proxy: str | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> LoginSession:
     """账密 + TOTP 纯协议登录，返回可用 session/AT。"""
     email = (email or "").strip()
     password = (password or "").strip()
     totp_secret = (totp_secret or "").strip().replace(" ", "").upper()
+    progress = progress or (lambda _message: None)
     if not email or not password or not totp_secret:
         raise MfaLoginError("LOGIN_FAILED", "email/password/totp_secret 不能为空")
 
@@ -259,13 +268,17 @@ def login_with_password_and_totp(
     )
 
     # 1) bootstrap
+    progress("建立连接并获取登录入口")
     csrf = auth.get_csrf_token()
     auth_url = auth.get_auth_url(csrf, email=email)
+    progress("初始化 OAuth 会话")
     device_id = auth.auth_oauth_init(auth_url)
+    progress("准备登录验证参数")
     sentinel = auth.get_sentinel_token(device_id)
     sess.trace.append({"step": "bootstrap", "device_id": device_id})
 
     # 2) authorize continue login
+    progress("提交账号并进入密码验证")
     login_step = auth.authorize_continue(
         email=email,
         sentinel_token=sentinel,
@@ -284,6 +297,7 @@ def login_with_password_and_totp(
         )
 
     # 3) password verify（内部会带 sentinel）
+    progress("验证账号密码")
     # 刷新一枚较新的 sentinel，贴近抓包
     try:
         auth.get_sentinel_token(device_id)
@@ -319,6 +333,7 @@ def login_with_password_and_totp(
     sess.factor_id = factor_id
 
     # 5) issue + verify totp
+    progress("验证 2FA 动态码")
     issue_mfa_challenge(auth, factor_id)
     last_err = ""
     verify_resp: dict[str, Any] = {}
@@ -358,6 +373,7 @@ def login_with_password_and_totp(
                     break
 
     # 6) finish session
+    progress("完成登录跳转并获取 AT")
     if not continue_url:
         try:
             continue_url = auth._normalize_continue_url(auth._reauthorize_for_session(auth_url) or "")

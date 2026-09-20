@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import requests
@@ -162,10 +162,7 @@ def fetch_latest_otp(mail_api: str, *, issued_after: float | None = None, timeou
             code = extract_otp_from_text(blob)
             if code:
                 return code
-        # fallback whole json text
-        code = extract_otp_from_text(raw_text)
-        if code:
-            return code
+        # 已过滤的过期邮件不能通过整段 JSON 回退重新被选中。
         return ""
 
     return _extract_html_mailbox_otp(str(payload), issued_after)
@@ -177,23 +174,33 @@ def wait_code(
     issued_after: float | None = None,
     timeout: float = 120.0,
     poll_interval: float = 2.5,
+    progress: Callable[[str], None] | None = None,
 ) -> str:
     """轮询收信 API，直到拿到 6 位码或超时。"""
-    deadline = time.time() + max(5.0, float(timeout))
+    started = time.monotonic()
+    deadline = started + max(5.0, float(timeout))
     last_err = ""
-    seen: set[str] = set()
-    while time.time() < deadline:
+    attempts = 0
+    while time.monotonic() < deadline:
+        attempts += 1
+        if progress:
+            elapsed = int(time.monotonic() - started)
+            detail = f"；上次收信请求异常：{last_err}" if last_err else "；等待新邮件送达"
+            progress(f"等待新邮箱验证码 · {elapsed}/{int(timeout)} 秒 · 第 {attempts} 次查询{detail}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            code = fetch_latest_otp(mail_api, issued_after=issued_after)
-            if code and code not in seen:
-                # 若 API 不提供时间戳，至少确保码在轮询窗口内新出现；
-                # 第一次看到也接受。
-                return code
+            code = fetch_latest_otp(mail_api, issued_after=issued_after, timeout=min(8.0, remaining))
             if code:
-                seen.add(code)
+                return code
+            last_err = ""
         except Exception as exc:
-            last_err = str(exc)
-        time.sleep(max(0.5, float(poll_interval)))
+            # 异常文本可能包含带凭据的收信 URL，只上报异常类型。
+            last_err = type(exc).__name__
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(max(0.5, float(poll_interval)), remaining))
     raise TimeoutError(
         f"MAIL_TIMEOUT: {int(timeout)}s 内未从收信 API 取到验证码"
         + (f" ({last_err})" if last_err else "")

@@ -46,7 +46,7 @@ def _should_auto_retry(task: dict, exc: Exception) -> bool:
     stage = str(task.get("stage") or "").strip()
     if stage == "submit_new_email_otp":
         return any(marker in message for marker in ("未取得服务端响应", "可使用失败重试", "http 401", "http 422", "http 400", "http 409"))
-    if stage in {"changed", "relogin_new", "protocol_relogin_new", "verified", "protocol_verified", "kept_open", "manual_review", "wait_new_email_otp"}:
+    if stage in {"changed", "relogin_new", "protocol_relogin_new", "protocol_export", "verified", "protocol_verified", "kept_open", "manual_review", "wait_new_email_otp"}:
         return False
     return isinstance(exc, TimeoutError) or stage in _TRANSIENT_STAGES
 
@@ -320,9 +320,12 @@ def _run(task_id: int) -> None:
 
         def progress(stage: str, message: str) -> None:
             nonlocal change_confirmed
-            if stage == "changed":
+            if stage in {"changed", "protocol_verified"}:
                 change_confirmed = True
-            if store.is_task_stop_requested(current_task_id):
+            # 协议提交已确认后继续保存新身份/AT，停止按钮不能抹掉成功结果。
+            if store.is_task_stop_requested(current_task_id) and not (
+                change_confirmed and str(task.get("rebind_mode") or "protocol") == "protocol"
+            ):
                 raise roxy_flow.TaskStopRequested("用户已请求停止")
             # 同步本轮真实阶段，避免前一条代理失败留下的 proxy_failed 阶段
             # 阻断 submit_new_email 临时故障的既有自动重试机制。
@@ -456,9 +459,6 @@ def _run(task_id: int) -> None:
             current_task_id = int(next_task["id"])
         except roxy_flow.RebindOutcomeUnknown as exc:
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
-            if store.is_task_stop_requested(current_task_id):
-                store.finish_stopped(current_task_id)
-                return
             logger.error("换绑结果待人工核验：task=%s new_email=%s reason=%s", current_task_id, exc.new_email, message)
             store.finish_review_failure(current_task_id, exc.new_email, message)
             return

@@ -1445,6 +1445,14 @@ def update_task(
             if status == "running" and not task.get("started_at"):
                 task["started_at"] = now
         if stage:
+            if task.get("stage") != stage or not task.get("stage_started_at"):
+                history = task.setdefault("stage_history", [])
+                history.append({
+                    "stage": stage, "started_at": now,
+                    "message": str(message or "")[:600],
+                })
+                task["stage_history"] = history[-80:]
+                task["stage_started_at"] = now
             task["stage"] = stage
         if message is not None:
             task["message"] = str(message)[:600]
@@ -1529,7 +1537,9 @@ def finish_stopped(task_id: int, message: str = "用户请求停止") -> dict | 
         ), None)
         now = _now()
         clean = str(message or "用户请求停止")[:600]
-        uncertain = bool(task.get("email_change_confirmed")) or bool(task.get("login_only"))
+        uncertain = bool(task.get("email_change_confirmed")) or bool(task.get("login_only")) or task.get("stage") in {
+            "submit_new_email_otp", "changed", "protocol_relogin_new", "protocol_export", "protocol_verified",
+        }
         task.update({
             "status": "stopped",
             "stage": "stopped_review" if uncertain else "stopped",
@@ -1542,7 +1552,7 @@ def finish_stopped(task_id: int, message: str = "用户请求停止") -> dict | 
         })
         if account:
             if uncertain:
-                email = str(account.get("current_email") or task.get("new_email") or "").strip()
+                email = str(task.get("new_email") or account.get("current_email") or "").strip()
                 account.update({
                     "status": "review", "current_email": email, "new_email": email,
                     "email_change_uncertain": True, "error": task["message"], "updated_at": now,
@@ -1762,7 +1772,7 @@ def retry_transient_failure(task_id: int, error: str, max_retries: int) -> dict:
 def recover_interrupted_tasks() -> int:
     active = [row for row in _read(_TASKS) if row.get("status") in {"queued", "running"}]
     uncertain_stages = {
-        "submit_new_email_otp", "changed", "protocol_relogin_new", "protocol_verified",
+        "submit_new_email_otp", "changed", "protocol_relogin_new", "protocol_export", "protocol_verified",
         "open_roxy_after_protocol", "relogin_new", "verified", "kept_open",
     }
     for row in active:

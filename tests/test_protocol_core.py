@@ -4,7 +4,7 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import app
 import protocol_flow
@@ -45,6 +45,8 @@ class ProtocolFlowTests(unittest.TestCase):
             totp_secret="JBSWY3DPEHPK3PXP", new_email="new@example.com",
             mail_api="https://mail.example/code", proxy="http://proxy.example:8080",
             mail_timeout=float(protocol_flow.settings.OTP_MAX_WAIT),
+            mail_poll_interval=float(protocol_flow.settings.OTP_POLL_INTERVAL),
+            progress=ANY,
         )
         self.assertEqual(result["access_token"], "at-new")
         self.assertEqual(result["roxy_browser_status"], "not_opened")

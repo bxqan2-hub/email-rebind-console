@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .change_email import ChangeEmailClient, ChangeEmailError, password_reauth
 from .mail_inbox import wait_code
@@ -69,6 +69,8 @@ def run_rebind_email(
     proxy: str | None = None,
     out_dir: str | Path | None = None,
     mail_timeout: float = 120.0,
+    mail_poll_interval: float = 2.5,
+    progress: Callable[[str, str], None] | None = None,
 ) -> RebindResult:
     old_email = (old_email or "").strip()
     new_email = (new_email or "").strip()
@@ -76,7 +78,8 @@ def run_rebind_email(
     totp_secret = (totp_secret or "").strip()
     mail_api = (mail_api or "").strip()
     trace: list[dict[str, Any]] = []
-    run_dir = ROOT / "outputs" / "rebind_runs" / datetime.now().strftime("%Y%m%d_%H%M%S")
+    progress = progress or (lambda _stage, _message: None)
+    run_dir = ROOT / "outputs" / "rebind_runs" / (datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8])
     run_dir.mkdir(parents=True, exist_ok=True)
 
     def _fail(code: str, message: str) -> RebindResult:
@@ -96,8 +99,10 @@ def run_rebind_email(
 
     try:
         print("[1/6] 旧邮箱账密+TOTP 登录 ...")
+        progress("protocol_login_old", "登录原邮箱：建立认证会话")
         login1 = login_with_password_and_totp(
-            old_email, password, totp_secret, proxy=proxy
+            old_email, password, totp_secret, proxy=proxy,
+            progress=lambda message: progress("protocol_login_old", f"登录原邮箱：{message}"),
         )
         _log(
             trace,
@@ -109,6 +114,7 @@ def run_rebind_email(
         )
 
         print("[2/6] 检查 change_email eligibility ...")
+        progress("check_email_eligibility", "检查账号是否满足邮箱换绑条件")
         client = ChangeEmailClient(login=login1)
         try:
             elig = client.eligibility()
@@ -117,6 +123,7 @@ def run_rebind_email(
         _log(trace, "eligibility", **{k: elig.get(k) for k in ("eligible", "eligibility_type")})
 
         print("[3/6] begin 发送新邮箱验证码 ...")
+        progress("submit_new_email", "向新邮箱发送验证码")
         issued_after = time.time()
         try:
             begin_resp = client.begin(new_email)
@@ -125,9 +132,11 @@ def run_rebind_email(
                 _log(trace, "begin_need_reauth", message=exc.message)
                 print("begin 要求 reauth，执行 password+MFA 再试 ...")
                 try:
+                    progress("protocol_reauth", "服务端要求重新认证，正在验证密码和 2FA")
                     password_reauth(login1)
                     # refresh client tokens
                     client = ChangeEmailClient(login=login1, session_id=str(uuid.uuid4()))
+                    progress("submit_new_email", "重新认证完成，向新邮箱发送验证码")
                     begin_resp = client.begin(new_email)
                 except Exception as exc2:
                     return _fail("REAUTH_FAILED", str(exc2))
@@ -137,27 +146,37 @@ def run_rebind_email(
 
         print("[4/6] 等待新邮箱验证码 ...")
         try:
-            code = wait_code(mail_api, issued_after=issued_after - 5, timeout=mail_timeout)
+            code = wait_code(
+                mail_api, issued_after=issued_after - 5, timeout=mail_timeout,
+                poll_interval=mail_poll_interval,
+                progress=lambda message: progress("wait_new_email_otp", message),
+            )
         except TimeoutError as exc:
             return _fail("MAIL_TIMEOUT", str(exc))
         _log(trace, "mail_code", code_tail=code[-2:])
 
         print("[5/6] verify 换绑 ...")
+        progress("submit_new_email_otp", "已收到验证码，正在提交换绑并等待服务端确认")
+        _log(trace, "verify_pending")
         try:
             verify_resp = client.verify(new_email, code)
         except ChangeEmailError as exc:
             return _fail(exc.code, exc.message)
         _log(trace, "verify", resp_keys=list(verify_resp.keys())[:10] if isinstance(verify_resp, dict) else [])
+        progress("changed", "服务端已确认换绑，接下来登录新邮箱获取 AT")
 
         print("[6/6] 新邮箱账密+TOTP 重登并导出 ...")
+        progress("protocol_relogin_new", "换绑已完成，正在登录新邮箱获取 AT")
         # 主动重建登录会话
         try:
             login2 = login_with_password_and_totp(
-                new_email, password, totp_secret, proxy=proxy
+                new_email, password, totp_secret, proxy=proxy,
+                progress=lambda message: progress("protocol_relogin_new", f"新邮箱重登：{message}"),
             )
         except MfaLoginError as exc:
             return _fail(exc.code if exc.code in {"LOGIN_FAILED", "MFA_FAILED"} else "RELOGIN_FAILED", exc.message)
 
+        progress("protocol_export", "新邮箱登录完成，正在校验邮箱并保存 AT")
         bundle = build_login_bundle(login2, rebind_email=new_email)
         session_email = str(bundle.get("email") or "")
         if session_email and session_email.lower() != new_email.lower():

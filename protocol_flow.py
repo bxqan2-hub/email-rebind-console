@@ -19,7 +19,7 @@ UPSTREAM_URL = "https://github.com/MervLis/chatgpt-rebind-standalone"
 UPSTREAM_COMMIT = "e27b3217dbfddab19e83dc57ab225173877e4663"
 UPSTREAM_ROOT = Path(__file__).resolve().parent / "integrations" / "chatgpt_rebind_standalone"
 
-# 上游源码保持原目录、原 import 和原实现；这里只把其项目根加入模块搜索路径。
+# 保持上游目录和入口；本地进度/性能补丁记录在 upstream-lock.json。
 if str(UPSTREAM_ROOT) not in sys.path:
     sys.path.insert(0, str(UPSTREAM_ROOT))
 
@@ -50,6 +50,12 @@ def _raise_upstream_failure(result: RebindResult, new_email: str) -> None:
     message = f"{code}: {result.message}"
     steps = {str(item.get("step") or "") for item in (result.trace or [])}
     lower = message.lower()
+    # 提交后的网络/登录失败绝不能回到旧邮箱重新换绑。
+    if steps & {"verify_pending", "verify"} or code == "RELOGIN_FAILED":
+        raise RebindOutcomeUnknown(new_email, message)
+    # MAIL_TIMEOUT 包含 timeout，但它属于收信故障，不是换绑代理故障。
+    if code == "MAIL_TIMEOUT":
+        raise ReplacementEmailFailure("otp_unavailable", message)
     if (
         "invalid_state" in lower
         or "sign-in session is no longer valid" in lower
@@ -60,15 +66,11 @@ def _raise_upstream_failure(result: RebindResult, new_email: str) -> None:
         raise ProtocolSessionFailure(message)
     if _looks_like_proxy_failure(message):
         raise ProxyFailure(message)
-    if code == "MAIL_TIMEOUT":
-        raise ReplacementEmailFailure("otp_unavailable", message)
     if any(marker in lower for marker in (
         "email already linked to another account", "email already in use",
         "already linked", "already exists", "occupied", "占用", "已使用",
     )):
         raise ReplacementEmailFailure("email_in_use", message)
-    if "verify" in steps or code == "RELOGIN_FAILED":
-        raise RebindOutcomeUnknown(new_email, message)
     raise RuntimeError(message)
 
 
@@ -83,11 +85,11 @@ def run_upstream_rebind(
     progress: Callable[[str, str], None] | None = None,
     stop_check: Callable[[], bool] | None = None,
 ) -> dict:
-    """原样调用上游 ``run_rebind_email``，仅把结果接回分站任务模型。"""
+    """调用上游流水线，将实时步骤和最终结果接回分站任务模型。"""
     progress = progress or (lambda _stage, _message: None)
     stop_check = stop_check or (lambda: False)
     _stop(stop_check)
-    progress("protocol_upstream", "调用 chatgpt-rebind-standalone 原生纯协议流水线")
+    progress("protocol_upstream", "准备纯协议换绑，正在建立原邮箱登录会话")
     result = run_rebind_email(
         old_email=old_email,
         password=password,
@@ -96,12 +98,17 @@ def run_upstream_rebind(
         mail_api=api_url,
         proxy=proxy_url or None,
         mail_timeout=float(settings.OTP_MAX_WAIT),
+        mail_poll_interval=float(settings.OTP_POLL_INTERVAL),
+        progress=progress,
     )
     # Do not abort after the upstream pipeline returns.  The standalone flow
     # may already have committed the email change and exported the new AT;
     # turning a user stop request at this boundary into ``stopped`` would hide
     # a successful upstream result and leave the local task state stale.
     if not result.ok:
+        steps = {item.get("step") for item in result.trace or []}
+        if not steps & {"verify_pending", "verify"}:
+            _stop(stop_check)
         _raise_upstream_failure(result, new_email)
 
     bundle_path = Path(str(result.bundle_path or ""))

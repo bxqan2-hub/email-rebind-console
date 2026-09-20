@@ -56,13 +56,13 @@ password + TOTP login, eligibility, begin, replacement-mail OTP, verify, and
 replacement-email login/AT export. `protocol_flow.py` is the local adapter. It
 imports and calls the upstream `rebind_core.pipeline.run_rebind_email` entrypoint
 instead of reimplementing its steps. The 27-file vendored tree is locked to the
-commit above, with one local bug fix in `rebind_core/mail_inbox.py`: HTML
+commit above, with the local fixes listed below. In `rebind_core/mail_inbox.py`, HTML
 mailbox responses are ordered newest-first, so the adapter now selects the
 first explicit OTP card (and avoids CSS/URL numbers) instead of the final
 six-digit match. Timestamped cards older than the current `begin` window are
 ignored while polling, so delivery latency cannot cause immediate submission
 of the previous run's code. The adapted combined tree SHA-256 is
-`aed98c25c6cb70204889a19a6e4a0eb2350556f87a7e2f129a6298994f927ce7`.
+`5af8be72974753c7eff476af08fbd2293b79e84b5d6ebc91e8f1f583a65d2300`.
 On Windows, `registration_core/sentinel_quickjs.py` passes
 `CREATE_NO_WINDOW` when spawning the Node Sentinel helper, preventing a
 console window flash without changing the Sentinel payload or protocol.
@@ -84,3 +84,22 @@ email change, logs into the replacement mailbox, obtains the new access token,
 and retains the successful browser session. The default **开始纯协议换绑** mode
 continues to use `protocol_flow.py`; the browser flow is selected only when the
 new button sends `rebind_mode=browser`.
+
+
+### Local progress and latency fixes (2026-09-20)
+
+The upstream revision remains pinned. The adapter still calls the single vendored
+pipeline. Local changes add callbacks for login substeps, eligibility, code delivery,
+mail polling, verification, replacement login, and export; they do not duplicate the
+protocol. Per-run directories now include a random suffix to separate concurrent
+traces. Mail polling uses a monotonic deadline, bounds each request to the remaining
+budget (up to 8 seconds), uses the existing poll-interval setting, and reports only
+exception types so mailbox URLs are not exposed. Timestamp-filtered JSON OTPs no
+longer reappear through whole-response fallback.
+
+Login attempts read the Web session after the redirect chain and skip optional OAuth
+exchange probes when it already contains an AT. The original exchange fallback is
+retained for sessions without an AT. MAIL_TIMEOUT is classified as a mailbox failure
+before generic network matching; post-submit failures are always held for review,
+including concurrent stop requests. No real account mutation is used by regression
+tests. Stage history and timestamps are saved in the existing ignored task store.
