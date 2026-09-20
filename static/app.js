@@ -41,7 +41,7 @@ function progressMarkup(t,compact=false){
   const retry=`邮箱尝试 ${Number(t.attempt)||1} · 代理尝试 ${Number(t.proxy_attempt)||0}`;
   const heading=`<div class="progress-heading"><strong>${esc(taskStage(t))}</strong>${phase>=0?`<span>${completed?'7 / 7 已完成':`步骤 ${phase+1} / 7`}</span>`:''}</div>`;
   const clocks=`<div class="progress-meta"><span>总耗时 ${taskClock(t.started_at||t.created_at,end)}</span>${t.stage_started_at?`<span>本阶段 ${taskClock(t.stage_started_at,end)}</span>`:''}<span>${retry}</span></div>`;
-  const steps=`<ol class="protocol-steps" aria-label="换绑步骤">${REBIND_STEPS.map((label,index)=>{
+  const steps=phase<0&&!completed&&t.status!=='queued'?`<p class="progress-wait">${active?'等待详细步骤上报。':'此任务未保存分步记录；可查看总耗时和最终原因。'}</p>`:`<ol class="protocol-steps" aria-label="换绑步骤">${REBIND_STEPS.map((label,index)=>{
     const state=completed||phase>index?'done':phase===index?(active?'current':'halted'):'pending';
     return `<li class="${state}" ${state==='current'?'aria-current="step"':''}><span>${state==='done'?'✓':index+1}</span><small>${label}</small></li>`;
   }).join('')}</ol>`;

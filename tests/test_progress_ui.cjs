@@ -21,5 +21,8 @@ context.task = {...context.task,status:'failed',stage:'manual_review',stop_reque
 assert.equal(vm.runInContext('taskStage(task)',context),'等待核验换绑结果');
 context.task = {...context.task,status:'running',stage:'protocol_upstream',stop_requested:false};
 assert.doesNotMatch(vm.runInContext('progressMarkup(task)',context), /步骤 \d \/ 7/);
+assert.match(vm.runInContext('progressMarkup(task)',context), /等待详细步骤上报/);
+context.task = {...context.task,status:'failed',stage:'failed'};
+assert.match(vm.runInContext('progressMarkup(task)',context), /未保存分步记录/);
 assert.equal(vm.runInContext("duration('invalid')",context),'—');
 console.log('Progress UI: stage states, terminal timing, legacy tasks and HTML escaping passed.');
