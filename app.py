@@ -22,6 +22,7 @@ def create_app(*, recover: bool = True) -> Flask:
         store.recover_interrupted_access_token_refreshes()
         store.recover_interrupted_trial_checks()
         store.backfill_success_replacement_api_urls()
+        store.recover_rebind_accounts(worker.protocol_flow.UPSTREAM_ROOT / "outputs" / "rebind_runs")
         for account in store.list_accounts():
             if (
                 account.get("status") == "success"
@@ -117,12 +118,6 @@ def create_app(*, recover: bool = True) -> Flask:
             return jsonify({"ok": True, **result})
         if result.get("reason") == "not_found":
             return jsonify({"ok": False, "error": "原邮箱账号不存在", **result}), 404
-        if result.get("reason") == "result_locked":
-            return jsonify({
-                "ok": False,
-                "error": "待核验账号已锁定，请确认实际换绑状态后再处理",
-                **result,
-            }), 409
         if result.get("reason") == "window_open":
             return jsonify({
                 "ok": False,
@@ -356,10 +351,12 @@ def create_app(*, recover: bool = True) -> Flask:
             if reason == "not_found":
                 return jsonify({"ok": False, "error": "原邮箱账号不存在"}), 404
             if reason == "not_review":
-                return jsonify({"ok": False, "error": "只有已换绑待核验账号可以重新登录获取 AT"}), 409
+                return jsonify({"ok": False, "error": "只有待获取 AT 或待核验账号可以重新登录"}), 409
             if reason == "busy":
                 return jsonify({"ok": False, "error": "该账号已有活动补救登录任务"}), 409
-            return jsonify({"ok": False, "error": "未找到已绑定的待核验替换邮箱"}), 409
+            if reason == "missing_login_credentials":
+                return jsonify({"ok": False, "error": "该账号缺少密码/2FA，且没有保存新邮箱取码 URL；请补充新邮箱取码资料"}), 409
+            return jsonify({"ok": False, "error": "账号未保存换绑后的邮箱地址"}), 409
         submitted = worker.submit_tasks([task], 1)
         return jsonify({
             "ok": True, "submitted": submitted, "transient_retries": transient_retries,

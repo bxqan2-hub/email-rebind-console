@@ -263,6 +263,7 @@ def _run(task_id: int) -> None:
     active_proxy: dict | None = None
     excluded_proxy_ids: set[int] = set()
     proxy_attempt = 0
+    login_retry = 0
     allow_proxy_reuse = False
     while True:
         context = store.get_task_context(current_task_id)
@@ -277,7 +278,7 @@ def _run(task_id: int) -> None:
             return
         attempt = int(task.get("attempt") or 1)
         login_only = bool(task.get("login_only"))
-        change_confirmed = bool(login_only or task.get("email_change_confirmed"))
+        change_confirmed = bool(task.get("email_change_confirmed") or account.get("email_change_confirmed"))
         retry_limit = max(0, min(
             int(task.get("max_transient_retries", settings.MAX_TRANSIENT_RETRIES) or 0), 10,
         ))
@@ -307,9 +308,10 @@ def _run(task_id: int) -> None:
             excluded_proxy_ids.add(int(active_proxy.get("id") or 0))
         store.assign_task_proxy(current_task_id, active_proxy, proxy_attempt)
         proxy_display = str(active_proxy.get("display") or f"代理 #{active_proxy.get('id')}")
-        initial_stage = "open_roxy" if login_only else "protocol_login_old"
+        protocol_login_only = login_only and str(task.get("rebind_mode") or "protocol") == "protocol"
+        initial_stage = ("protocol_at_refresh" if protocol_login_only else "open_roxy") if login_only else "protocol_login_old"
         initial_message = (
-            f"第 {attempt} 次登录补救 / 第 {proxy_attempt} 条代理：使用 {proxy_display} 打开 Roxy"
+            f"第 {attempt} 次登录补救 / 第 {proxy_attempt} 条代理：使用 {proxy_display} 登录新邮箱获取 AT"
             if login_only else
             f"第 {attempt} 次纯协议换绑 / 第 {proxy_attempt} 条代理：使用 {proxy_display} 登录原邮箱"
         )
@@ -345,10 +347,46 @@ def _run(task_id: int) -> None:
                 old_email=str(account.get("old_email") or ""), exit_geo=exit_geo,
             )
 
+        def recover_confirmed_at(message: str) -> None:
+            if not login_only and str(task.get("rebind_mode") or "protocol") == "protocol":
+                # 已确认换绑只补登一次，不回到旧邮箱或重复提交换绑。
+                try:
+                    progress("protocol_at_retry", "邮箱已换绑；首次获取 AT 失败，自动重新协议登录一次")
+                    result = protocol_flow.refresh_access_token_protocol(
+                        email=str(task.get("new_email") or ""),
+                        password=str(account.get("password") or ""),
+                        totp_secret=totp_secret,
+                        proxy_url=str(active_proxy.get("proxy_url") or ""),
+                        progress=progress,
+                    )
+                    if bool(task.get("open_roxy_after")):
+                        result = _open_roxy_after_protocol(
+                            task_id=current_task_id, task=task, account=account,
+                            replacement=replacement, protocol_result=result,
+                            protocol_proxy=active_proxy, retry_limit=retry_limit,
+                            stop_check=stop_check,
+                        )
+                    store.finish_success(current_task_id, result)
+                except Exception as retry_exc:
+                    message = f"换绑已确认；自动重新协议登录一次仍未取得 AT：{type(retry_exc).__name__}: {str(retry_exc)[:400]}"
+                else:
+                    submit_trial_check(int(account["id"]))
+                    return
+            logger.error("邮箱已换绑，待获取 AT：task=%s reason=%s", current_task_id, message)
+            store.finish_review_failure(current_task_id, str(task.get("new_email") or ""), message)
+
         try:
             raw_totp = str(account.get("totp_secret") or "").strip()
             totp_secret = resolve_totp_secret(raw_totp) if raw_totp else ""
-            if login_only:
+            if protocol_login_only:
+                result = protocol_flow.refresh_access_token_protocol(
+                    email=str(task.get("new_email") or ""),
+                    password=str(account.get("password") or ""),
+                    totp_secret=totp_secret,
+                    proxy_url=str(active_proxy.get("proxy_url") or ""),
+                    progress=progress,
+                )
+            elif login_only:
                 result = roxy_flow.perform_replacement_login(
                     new_email=str(replacement.get("email") or account.get("current_email") or ""),
                     password=str(account.get("password") or ""),
@@ -459,6 +497,11 @@ def _run(task_id: int) -> None:
             current_task_id = int(next_task["id"])
         except roxy_flow.RebindOutcomeUnknown as exc:
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if exc.confirmed and not change_confirmed:
+                progress("changed", "服务端已确认邮箱换绑，正在保留新邮箱登录资料")
+            if change_confirmed:
+                recover_confirmed_at(message)
+                return
             logger.error("换绑结果待人工核验：task=%s new_email=%s reason=%s", current_task_id, exc.new_email, message)
             store.finish_review_failure(current_task_id, exc.new_email, message)
             return
@@ -468,8 +511,20 @@ def _run(task_id: int) -> None:
                 store.finish_stopped(current_task_id)
                 return
             if login_only:
+                transient = protocol_flow._looks_like_proxy_failure(message) or any(
+                    marker in message.lower() for marker in ("invalid_state", "session is no longer valid", "缺少 access_token", "未返回 access_token")
+                )
+                if protocol_login_only and transient and login_retry < retry_limit:
+                    login_retry += 1
+                    store.update_task(current_task_id, stage="protocol_at_retry", message=f"新邮箱协议登录临时失败，重新建立会话 {login_retry}/{retry_limit}：{message}")
+                    active_proxy = None
+                    allow_proxy_reuse = True
+                    continue
                 logger.error("已换绑账号补救登录失败：task=%s email=%s reason=%s", current_task_id, replacement.get("email"), message)
                 store.finish_review_failure(current_task_id, str(replacement.get("email") or ""), message)
+                return
+            if change_confirmed:
+                recover_confirmed_at(message)
                 return
             if _should_auto_retry(task, exc):
                 rotation = store.retry_transient_failure(

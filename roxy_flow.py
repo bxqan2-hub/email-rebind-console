@@ -28,11 +28,12 @@ class ReplacementEmailFailure(RuntimeError):
 
 
 class RebindOutcomeUnknown(RuntimeError):
-    """邮箱可能已经换绑，禁止自动换下一个邮箱，必须保留现场供人工核验。"""
+    """提交后未获得完整登录结果；保留新邮箱并区分已确认换绑与结果未知。"""
 
-    def __init__(self, new_email: str, message: str):
+    def __init__(self, new_email: str, message: str, *, confirmed: bool = False):
         super().__init__(message)
         self.new_email = str(new_email or "").strip()
+        self.confirmed = bool(confirmed)
 
 
 class ProxyFailure(RuntimeError):

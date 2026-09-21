@@ -127,7 +127,10 @@ class ProtocolFlowTests(unittest.TestCase):
         login.session_token = "session-refreshed"
         login.result.email = "new@example.com"
         progress = []
-        with patch.object(protocol_flow, "login_with_password_and_totp", return_value=login) as login_call:
+        def login_with_progress(*args, **kwargs):
+            kwargs["progress"]("正在验证 TOTP")
+            return login
+        with patch.object(protocol_flow, "login_with_password_and_totp", side_effect=login_with_progress) as login_call:
             result = protocol_flow.refresh_access_token_protocol(
                 email="new@example.com", password="Password!",
                 totp_secret="JBSWY3DPEHPK3PXP", proxy_url="http://proxy.example:8080",
@@ -136,11 +139,11 @@ class ProtocolFlowTests(unittest.TestCase):
 
         login_call.assert_called_once_with(
             "new@example.com", "Password!", "JBSWY3DPEHPK3PXP",
-            proxy="http://proxy.example:8080",
+            proxy="http://proxy.example:8080", progress=ANY,
         )
         self.assertEqual(result["access_token"], "at-refreshed")
         self.assertEqual(result["roxy_browser_status"], "not_opened")
-        self.assertEqual(progress, ["protocol_at_refresh", "protocol_at_refreshed"])
+        self.assertEqual(progress, ["protocol_at_refresh", "protocol_at_refresh", "protocol_at_refreshed"])
 
     def test_stop_requested_after_upstream_success_does_not_hide_result(self):
         with tempfile.TemporaryDirectory() as tmp:

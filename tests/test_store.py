@@ -174,7 +174,7 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(store.list_accounts()[0]["status"], "ready")
                 self.assertEqual(store.list_replacements()[0]["status"], "available")
 
-    def test_stop_after_change_confirmation_freezes_account_for_review(self):
+    def test_stop_after_change_confirmation_keeps_account_pending_at(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with patch.object(store, "_ACCOUNTS", root / "accounts.json"), \
@@ -187,9 +187,9 @@ class StoreTests(unittest.TestCase):
                 store.request_task_stop(task["id"])
 
                 stopped = store.finish_stopped(task["id"])
-                self.assertEqual(stopped["stage"], "stopped_review")
-                self.assertEqual(store.list_accounts()[0]["status"], "review")
-                self.assertEqual(store.list_replacements()[0]["status"], "review")
+                self.assertEqual(stopped["stage"], "at_pending")
+                self.assertEqual(store.list_accounts()[0]["status"], "pending_at")
+                self.assertEqual(store.list_replacements()[0]["status"], "used")
 
     def test_late_success_clears_stale_stop_and_error_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -478,9 +478,10 @@ class StoreTests(unittest.TestCase):
                     task = store.reserve_batch()[0]
                     store.update_task(task["id"], status="running", stage=stage, message="换绑已进入提交边界")
                     self.assertEqual(store.recover_interrupted_tasks(), 1)
-                    self.assertEqual(store.list_accounts()[0]["status"], "review")
-                    self.assertEqual(store.list_replacements()[0]["status"], "review")
-                    self.assertEqual(store.list_tasks()[0]["stage"], "manual_review")
+                    confirmed = stage == "changed"
+                    self.assertEqual(store.list_accounts()[0]["status"], "pending_at" if confirmed else "review")
+                    self.assertEqual(store.list_replacements()[0]["status"], "used" if confirmed else "review")
+                    self.assertEqual(store.list_tasks()[0]["stage"], "at_pending" if confirmed else "manual_review")
 
 
 if __name__ == "__main__":

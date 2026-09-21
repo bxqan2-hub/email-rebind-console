@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Callable
@@ -50,9 +51,11 @@ def _raise_upstream_failure(result: RebindResult, new_email: str) -> None:
     message = f"{code}: {result.message}"
     steps = {str(item.get("step") or "") for item in (result.trace or [])}
     lower = message.lower()
+    if "verify" not in steps and code == "VERIFY_FAILED" and re.search(r"verify HTTP (?:400|401|403|422)\b", message):
+        raise RuntimeError(f"换绑未生效，验证码提交被拒绝：{message}")
     # 提交后的网络/登录失败绝不能回到旧邮箱重新换绑。
     if steps & {"verify_pending", "verify"} or code == "RELOGIN_FAILED":
-        raise RebindOutcomeUnknown(new_email, message)
+        raise RebindOutcomeUnknown(new_email, message, confirmed="verify" in steps or code == "RELOGIN_FAILED")
     # MAIL_TIMEOUT 包含 timeout，但它属于收信故障，不是换绑代理故障。
     if code == "MAIL_TIMEOUT":
         raise ReplacementEmailFailure("otp_unavailable", message)
@@ -113,12 +116,19 @@ def run_upstream_rebind(
 
     bundle_path = Path(str(result.bundle_path or ""))
     if not bundle_path.is_file():
-        raise RebindOutcomeUnknown(new_email, "上游返回成功，但 login_bundle 文件不存在")
-    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        raise RebindOutcomeUnknown(new_email, "上游返回成功，但 login_bundle 文件不存在", confirmed=True)
+    try:
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RebindOutcomeUnknown(new_email, f"邮箱已换绑，读取登录结果失败：{type(exc).__name__}", confirmed=True) from exc
+    if not isinstance(bundle, dict):
+        raise RebindOutcomeUnknown(new_email, "邮箱已换绑，但登录结果格式不正确", confirmed=True)
     session_email = str(bundle.get("email") or result.session_email or new_email).strip()
     access_token = str(bundle.get("access_token") or "").strip()
+    if session_email.lower() != new_email.lower():
+        raise RebindOutcomeUnknown(new_email, "邮箱已换绑，但登录结果邮箱不匹配", confirmed=True)
     if not access_token:
-        raise RebindOutcomeUnknown(new_email, "上游返回成功，但 login_bundle 缺少 access_token")
+        raise RebindOutcomeUnknown(new_email, "上游返回成功，但 login_bundle 缺少 access_token", confirmed=True)
 
     progress("protocol_verified", "上游原生纯协议换绑、重登和 AT 导出完成")
     return {
@@ -144,13 +154,14 @@ def refresh_access_token_protocol(
     """不打开 Roxy 时，用上游纯协议登录一次并导出新的 AT。"""
     progress = progress or (lambda _stage, _message: None)
     target_email = str(email or "").strip()
-    progress("protocol_at_refresh", f"未检测到 Roxy 窗口，使用纯协议登录 {target_email} 获取 AT")
+    progress("protocol_at_refresh", f"使用新邮箱 {target_email} 重新建立协议登录并获取 AT")
     try:
         login = login_with_password_and_totp(
             target_email,
             str(password or "").strip(),
             str(totp_secret or "").strip(),
             proxy=str(proxy_url or "").strip() or None,
+            progress=lambda message: progress("protocol_at_refresh", f"新邮箱重登：{message}"),
         )
     except MfaLoginError:
         raise
