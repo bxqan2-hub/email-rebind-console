@@ -21,7 +21,24 @@ GCASH_HOST = os.getenv("EMAIL_REBIND_GCASH_HOST", HOST)
 GCASH_PORT = int(os.getenv("EMAIL_REBIND_GCASH_PORT", "8931"))
 GCASH_BROWSER_HOST = "127.0.0.1" if GCASH_HOST in {"0.0.0.0", "::"} else GCASH_HOST
 GCASH_URL = f"http://{GCASH_BROWSER_HOST}:{GCASH_PORT}/"
-DEFAULT_WORKERS = max(1, int(os.getenv("EMAIL_REBIND_WORKERS", "2")))
+MAX_WORKERS = max(1, int(os.getenv("EMAIL_REBIND_MAX_WORKERS", "100")))
+DEFAULT_WORKERS = max(1, min(int(os.getenv("EMAIL_REBIND_WORKERS", "2")), MAX_WORKERS))
+
+
+def validate_workers(value: object) -> int:
+    """所有入口共用并发限制，拒绝非法值，不静默截断用户设置。"""
+    message = f"并发必须是 1~{MAX_WORKERS} 的整数"
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(message)
+    try:
+        workers = int(value)
+    except ValueError as exc:
+        raise ValueError(message) from exc
+    if not 1 <= workers <= MAX_WORKERS:
+        raise ValueError(message)
+    return workers
+
+
 OTP_MAX_WAIT = max(30, int(os.getenv("EMAIL_REBIND_OTP_MAX_WAIT", "150")))
 OTP_POLL_INTERVAL = max(1.0, float(os.getenv("EMAIL_REBIND_OTP_POLL_INTERVAL", "3")))
 MAIL_VERIFY_TLS = os.getenv("EMAIL_REBIND_MAIL_VERIFY_TLS", "1").strip().lower() not in {"0", "false", "no"}

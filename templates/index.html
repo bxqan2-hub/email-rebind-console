@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>邮箱换绑工作台</title>
-  <link rel="stylesheet" href="/static/app.css?v=20260921-at-recovery">
+  <link rel="stylesheet" href="/static/app.css?v=20260921-concurrency">
 </head>
 <body>
   <aside class="sidebar">
@@ -51,7 +51,7 @@
       </div>
 
       <article class="card pairing-card">
-        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对</h2><p>默认使用纯协议完成原邮箱登录、换绑、新邮箱重登和 AT 获取；需要打开 Roxy 执行完整浏览器换绑时，点击“打开浏览器换绑”。</p></div><div class="actions"><label>并发 <input id="workers" type="number" min="1" max="10" value="2"></label><label>自动重试 <input id="transientRetries" type="number" min="0" max="10" value="2"></label><label>显示条数 <input id="pairVisibleRows" type="number" min="1" max="100" value="10"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn danger" id="deleteSelectedAccounts" disabled>删除所选原账号</button><button class="btn success" id="startRebind">开始纯协议换绑</button><button class="btn violet" id="startBrowserRebind">打开浏览器换绑</button></div></div>
+        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对</h2><p>默认使用纯协议完成原邮箱登录、换绑、新邮箱重登和 AT 获取；需要打开 Roxy 执行完整浏览器换绑时，点击“打开浏览器换绑”。</p></div><div class="actions"><label title="只影响新提交的批次，已启动批次保持原并发">本批并发 <input id="workers" type="number" min="1" max="{{ max_workers|default(10) }}" value="{{ default_workers|default(2) }}"></label><small id="workerHint">1~{{ max_workers|default(10) }} · 仅新批次生效</small><label>自动重试 <input id="transientRetries" type="number" min="0" max="10" value="2"></label><label>显示条数 <input id="pairVisibleRows" type="number" min="1" max="100" value="10"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn danger" id="deleteSelectedAccounts" disabled>删除所选原账号</button><button class="btn success" id="startRebind">开始纯协议换绑</button><button class="btn violet" id="startBrowserRebind">打开浏览器换绑</button></div></div>
         <div class="table-wrap pairing-table"><table><thead><tr><th><input type="checkbox" id="selectAll"></th><th>原邮箱</th><th>账号状态</th><th>一对一替换邮箱</th><th>操作</th></tr></thead><tbody id="pairBody"></tbody></table></div>
       </article>
 
@@ -88,6 +88,6 @@
     </section>
   </main>
   <div id="toast"></div>
-  <script src="/static/app.js?v=20260921-at-recovery"></script>
+  <script src="/static/app.js?v=20260921-concurrency"></script>
 </body>
 </html>

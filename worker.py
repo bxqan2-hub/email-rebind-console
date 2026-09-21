@@ -560,7 +560,7 @@ def _run(task_id: int) -> None:
 def submit_tasks(tasks: list[dict], workers: int) -> int:
     if not tasks:
         return 0
-    executor = ThreadPoolExecutor(max_workers=max(1, min(int(workers or 1), len(tasks), 10)), thread_name_prefix="email-rebind")
+    executor = ThreadPoolExecutor(max_workers=min(settings.validate_workers(workers), len(tasks)), thread_name_prefix="email-rebind")
     with _LOCK:
         _EXECUTORS.append(executor)
     futures = [executor.submit(_run, int(task["id"])) for task in tasks]

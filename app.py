@@ -45,6 +45,8 @@ def create_app(*, recover: bool = True) -> Flask:
             port=settings.PORT,
             gcash_url=settings.GCASH_URL,
             gcash_upstream_commit=gcash_service.UPSTREAM_COMMIT,
+            max_workers=settings.MAX_WORKERS,
+            default_workers=settings.DEFAULT_WORKERS,
         )
 
     @app.get("/health")
@@ -66,7 +68,11 @@ def create_app(*, recover: bool = True) -> Flask:
             "proxies": store.list_proxies(),
             "detection_proxies": store.list_detection_proxies(),
             "tasks": store.list_tasks(),
-            "settings": {"max_transient_retries": settings.MAX_TRANSIENT_RETRIES},
+            "settings": {
+                "max_transient_retries": settings.MAX_TRANSIENT_RETRIES,
+                "max_workers": settings.MAX_WORKERS,
+                "default_workers": settings.DEFAULT_WORKERS,
+            },
             "pool_name": "替换邮箱",
             "proxy_pool_name": "换绑代理",
         })
@@ -268,9 +274,9 @@ def create_app(*, recover: bool = True) -> Flask:
             return jsonify({"ok": False, "error": "account_ids 必须是数组"}), 400
         ids = [int(value) for value in raw_ids if str(value).isdigit()]
         try:
-            workers = max(1, min(int(data.get("workers") or settings.DEFAULT_WORKERS), 10))
-        except (TypeError, ValueError):
-            return jsonify({"ok": False, "error": "workers 必须是 1~10 的整数"}), 400
+            workers = settings.validate_workers(data.get("workers", settings.DEFAULT_WORKERS))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
         try:
             transient_retries = max(0, min(int(data.get("transient_retries", settings.MAX_TRANSIENT_RETRIES)), 10))
         except (TypeError, ValueError):
@@ -296,9 +302,11 @@ def create_app(*, recover: bool = True) -> Flask:
         )
         if not tasks:
             return jsonify({"ok": False, "error": "没有可一对一配对的待换绑账号和替换邮箱"}), 409
-        submitted = worker.submit_tasks(tasks, workers)
+        effective_workers = min(workers, len(tasks))
+        submitted = worker.submit_tasks(tasks, effective_workers)
         return jsonify({
-            "ok": True, "submitted": submitted, "workers": workers,
+            "ok": True, "submitted": submitted, "workers": effective_workers,
+            "requested_workers": workers,
             "transient_retries": transient_retries,
             "open_roxy_after": open_roxy_after, "tasks": tasks,
             "rebind_mode": rebind_mode,

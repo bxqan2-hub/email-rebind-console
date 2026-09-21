@@ -142,6 +142,10 @@ eligibility → begin → 新邮箱验证码 → verify → 纯协议使用新�
 邮箱 API 默认校验 HTTPS 证书；只有内部自签名接口需要在启动前设置
 `EMAIL_REBIND_MAIL_VERIFY_TLS=0`。也可用 `EMAIL_REBIND_PORT`、
 `EMAIL_REBIND_WORKERS`、`EMAIL_REBIND_OTP_MAX_WAIT` 调整端口、并发和取码超时。
+页面的“本批并发”用于新提交的批次，刷新页面会保留已选择的值，不调整已经启动的批次。
+默认支持 1~100 并发，可用 `EMAIL_REBIND_MAX_WORKERS` 调整上限；页面、API 和线程池
+共用此限制，超出范围会明确报错。设置 36 且配对任务至少 36 个时，线程池使用 36 个执行位；
+任务不足时以实际任务数为准。提交提示显示本批生效并发，首页分别显示执行中和排队数量。
 `EMAIL_REBIND_MAX_PROXY_ATTEMPTS` 控制单账号最多自动检测多少条代理，默认 5。
 
 ## 失败处理状态机

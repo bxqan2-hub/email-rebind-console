@@ -829,6 +829,8 @@ def summary() -> dict:
             "proxy_failed": sum(1 for row in proxies if row.get("status") == "failed"),
             "accounts_review": sum(1 for row in accounts if row.get("status") == "review"),
             "tasks_active": sum(1 for row in tasks if row.get("status") in {"queued", "running"}),
+            "tasks_running": sum(1 for row in tasks if row.get("status") == "running"),
+            "tasks_queued": sum(1 for row in tasks if row.get("status") == "queued"),
             "tasks_failed": sum(1 for row in tasks if row.get("status") == "failed"),
             "tasks_stopped": sum(1 for row in tasks if row.get("status") == "stopped"),
         }
