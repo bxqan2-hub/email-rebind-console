@@ -5,6 +5,7 @@ let selected = new Set();
 let selectionInitialized = false;
 let selectedSuccessAccounts = new Set();
 let successTrialFilter = 'all';
+let exportCopyFormat = 'full';
 let selectedResultTasks = new Set();
 let selectedReplacements = new Set();
 let pairs = [];
@@ -147,7 +148,22 @@ $('#poolBody').onclick=async e=>{const restore=e.target.closest('[data-restore-r
 $('#proxyPoolBody').onclick=async e=>{const restore=e.target.closest('[data-restore-proxy]');if(restore){restore.disabled=true;try{await api(`/api/proxies/${restore.dataset.restoreProxy}/restore`,{method:'POST'});toast('失败代理已重新启用');await load()}catch(error){toast(error.message)}finally{restore.disabled=false}return}const remove=e.target.closest('[data-delete-proxy]');if(!remove||!confirm(`确定从换绑代理池删除 ${remove.dataset.label}？已有任务历史不会删除。`))return;remove.disabled=true;try{await api(`/api/proxies/${remove.dataset.deleteProxy}`,{method:'DELETE'});toast('代理已删除');await load()}catch(error){toast(error.message);remove.disabled=false}};
 async function fetchText(url,emptyMessage){const response=await fetch(url,{cache:'no-store'});if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error||`读取失败：HTTP ${response.status}`)}const text=await response.text();if(!text.trim())throw new Error(emptyMessage);return text}
 async function copyText(text){if(navigator.clipboard?.writeText){try{await navigator.clipboard.writeText(text);return}catch(_){}}const area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();const copied=document.execCommand('copy');area.remove();if(!copied)throw new Error('浏览器复制失败，请允许剪贴板权限后重试')}
-async function copyExport(url){await copyText(await fetchText(url,'暂无完成结果'))}
+function setExportCopyFormat(value){
+  exportCopyFormat=value==='without_old_email'?'without_old_email':'full';
+  $$('[data-export-copy-format]').forEach(input=>{input.value=exportCopyFormat});
+  try{localStorage.setItem('email-rebind:export-copy-format',exportCopyFormat)}catch(_){}
+}
+function initExportCopyFormat(){
+  let saved='full';try{saved=localStorage.getItem('email-rebind:export-copy-format')||'full'}catch(_){}
+  setExportCopyFormat(saved);
+  $$('[data-export-copy-format]').forEach(input=>{input.onchange=()=>setExportCopyFormat(input.value)});
+}
+function formatExportText(text,format=exportCopyFormat){
+  if(format!=='without_old_email')return text;
+  // 只移除每行首个字段，密码、取码 URL 和 AT 内的分隔符保持原样。
+  return text.replace(/^[^\r\n]*?----/gm,'');
+}
+async function copyExport(url){const format=exportCopyFormat;await copyText(formatExportText(await fetchText(url,'暂无完成结果'),format))}
 async function copyAccessToken(accountId){await copyText((await fetchText(`/api/accounts/${accountId}/access-token`,'该账号暂无 AT')).trim())}
 function waitForGCashFrame(frame){if(frame.dataset.loaded==='1')return Promise.resolve();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('GCash 提链界面加载超时')),10000);frame.addEventListener('load',()=>{clearTimeout(timer);frame.dataset.loaded='1';resolve()},{once:true});if(!frame.getAttribute('src'))frame.src=frame.dataset.src})}
 async function pushAccessTokenToGCash(accountId){const account=STATE.accounts.find(item=>Number(item.id)===Number(accountId));const token=(await fetchText(`/api/accounts/${accountId}/access-token`,'该账号暂无 AT')).trim();const nav=document.querySelector('[data-view="gcash"]');const frame=$('#gcashFrame');if(!nav||!frame)throw new Error('GCash 提链界面未加载');nav.click();await waitForGCashFrame(frame);const targetOrigin=new URL(frame.dataset.src,location.href).origin;frame.contentWindow.postMessage({type:'email-rebind:push-at',accessToken:token,email:account?.new_email||account?.current_email||account?.old_email||''},targetOrigin);toast('已跳转 GCash 提链并自动填入 AT')}
@@ -183,6 +199,7 @@ $('#deleteSelectedAccounts').onclick=async()=>{const button=$('#deleteSelectedAc
 $('#startRebind').onclick=async()=>{if(!selected.size)return toast('请至少选择一个待换绑账号');if(!pairs.length)return toast('没有可用的一对一配对');const workers=readWorkers();if(workers===null)return;const openRoxyAfter=Boolean($('#openRoxyAfter')?.checked);const required=openRoxyAfter?2:1;if(Number(STATE.summary.proxy_available||0)<required)return toast(openRoxyAfter?'完成后打开 Roxy 需要至少两条可用代理':'换绑代理池没有可用代理，请先手动导入');const mode=openRoxyAfter?'纯协议完成后额外选择代理打开 Roxy':'全程纯协议，不打开 Roxy';if(!confirm(`将启动 ${pairs.length} 个换绑任务：${mode}；本批并发 ${Math.min(workers,pairs.length)}（设置 ${workers}）；临时失败自动重试 ${Number($('#transientRetries').value||0)} 次。确定继续？`))return;const button=$('#startRebind');button.disabled=true;try{const r=await api('/api/rebind/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_ids:[...selected],workers,transient_retries:Number($('#transientRetries').value||0),open_roxy_after:openRoxyAfter})});toast(`已提交 ${r.submitted} 个纯协议换绑任务，本批并发 ${r.workers}${r.open_roxy_after?'，完成后打开 Roxy':''}`);selected.clear();await load()}catch(e){toast(e.message)}finally{button.disabled=false}};
 async function startBrowserRebind(){if(!selected.size)return toast('请至少选择一个待换绑账号');if(!pairs.length)return toast('没有可用的一对一配对');const workers=readWorkers();if(workers===null)return;if(Number(STATE.summary.proxy_available||0)<1)return toast('换绑代理池没有可用代理，请先手动导入');if(!confirm(`将启动 ${pairs.length} 个浏览器换绑任务：创建 Roxy、登录原邮箱、执行换绑、登录新邮箱并获取 AT；本批并发 ${Math.min(workers,pairs.length)}（设置 ${workers}）；临时失败自动重试 ${Number($('#transientRetries').value||0)} 次。确定继续？`))return;const button=$('#startBrowserRebind');button.disabled=true;try{const r=await api('/api/rebind/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_ids:[...selected],workers,transient_retries:Number($('#transientRetries').value||0),rebind_mode:'browser'})});toast(`已提交 ${r.submitted} 个浏览器换绑任务，本批并发 ${r.workers}`);selected.clear();await load()}catch(e){toast(e.message)}finally{button.disabled=false}}
 $('#startBrowserRebind').onclick=startBrowserRebind;
+initExportCopyFormat();
 $('#copyExport').onclick=async()=>{const button=$('#copyExport');button.disabled=true;try{await copyExport('/api/export');toast('已复制换绑完成结果')}catch(error){toast(error.message)}finally{button.disabled=false}};
 $('#copySuccessResultsBottom').onclick=async()=>{const button=$('#copySuccessResultsBottom');button.disabled=true;try{await copyExport('/api/export');toast('已复制成功账号完整结果（密码/2FA/AT）')}catch(error){toast(error.message)}finally{button.disabled=false}};
 $('#clearFinishedTasks').onclick=async()=>{const count=STATE.tasks.filter(t=>['success','failed','review','stopped'].includes(t.status)).length;if(!count)return toast('没有已结束记录');if(!confirm(`确定清理全部 ${count} 条成功、失败、停止或待核验任务记录？账号和导出结果会保留。`))return;const button=$('#clearFinishedTasks');button.disabled=true;try{const r=await api('/api/tasks/finished',{method:'DELETE'});toast(`已清理 ${r.deleted} 条已结束记录`);await load()}catch(error){toast(error.message)}finally{button.disabled=false}};
