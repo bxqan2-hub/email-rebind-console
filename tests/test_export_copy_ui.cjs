@@ -24,7 +24,7 @@ function setup(saved, storageBlocked = false) {
     navigator: {clipboard: {async writeText(value) { copied.push(value); }}},
     async fetch(url, options) {
       requests.push({url, options});
-      return {ok: true, async text() { return url.endsWith('/access-token') ? '  AT-token\n' : full; }};
+      return {ok: true, async text() { return url.endsWith('/access-token') ? '  AT-token\n' : url.includes('format=without_old_email') ? withoutOld : full; }};
     },
     toast: message => messages.push(message),
   });
@@ -70,31 +70,33 @@ test('single-account result follows the format while AT-only copying is unchange
   const button = {dataset: {copyExport: '7'}};
   await ui.elements.get('#successAccountsBody').onclick({target: {closest: selector => selector === '[data-copy-export]' ? button : null}});
   assert.equal(ui.copied[0], withoutOld);
-  assert.equal(ui.requests[0].url, '/api/accounts/7/export');
+  assert.equal(ui.requests[0].url, '/api/accounts/7/export?format=without_old_email');
   assert.equal(ui.requests[0].options.cache, 'no-store');
   assert.equal(button.disabled, false);
   await ui.context.copyAccessToken(7);
   assert.equal(ui.copied[1], 'AT-token');
 });
 
-test('mixed account formats, CRLF, blank lines and embedded separators are preserved', () => {
-  const {context} = setup('without_old_email');
-  const url = 'old-api@example.com----new-api@example.com----https://mail.example/key----suffix----AT-api';
-  const input = full.replace('\n', '\r\n') + '\r\n' + url + '\r\n';
-  const expected = withoutOld.replace('\n', '\r\n') + '\r\n' + url.slice(url.indexOf('----') + 4) + '\r\n';
-  assert.equal(context.formatExportText(input), expected);
-  assert.equal(context.formatExportText(''), '');
-  assert.equal(context.formatExportText('unchanged'), 'unchanged');
+test('server export is copied byte for byte, including mixed login and rebind records', async () => {
+  const ui = setup('without_old_email');
+  const login = 'original@example.com----pass----2FA----AT-original';
+  const mixed = withoutOld.replace('\n', '\r\n') + login + '\r\n';
+  ui.context.fetch = async url => {
+    assert.equal(url, '/api/export?format=without_old_email');
+    return {ok:true, async text() {return mixed;}};
+  };
+  await ui.context.copyExport('/api/export');
+  assert.deepEqual(ui.copied, [mixed]);
 });
 
 test('saved preferences restore, invalid preferences use default, and blocked storage is harmless', () => {
-  assert.equal(setup('without_old_email').context.formatExportText(full), withoutOld);
-  assert.equal(setup('invalid').context.formatExportText(full), full);
+  assert.equal(setup('without_old_email').context.exportRequestUrl('/api/export'), '/api/export?format=without_old_email');
+  assert.equal(setup('invalid').context.exportRequestUrl('/api/export'), '/api/export');
   const ui = setup(undefined, true);
-  assert.equal(ui.context.formatExportText(full), full);
+  assert.equal(ui.context.exportRequestUrl('/api/export'), '/api/export');
   ui.selectors[0].value = 'without_old_email';
   ui.selectors[0].onchange();
-  assert.equal(ui.context.formatExportText(full), withoutOld);
+  assert.equal(ui.context.exportRequestUrl('/api/export'), '/api/export?format=without_old_email');
 });
 
 test('in-flight copy uses the format selected when clicked', async () => {
@@ -103,7 +105,7 @@ test('in-flight copy uses the format selected when clicked', async () => {
   ui.context.fetch = () => new Promise(resolve => { finishFetch = resolve; });
   const pending = ui.context.copyExport('/api/export');
   ui.context.setExportCopyFormat('full');
-  finishFetch({ok: true, async text() { return full; }});
+  finishFetch({ok: true, async text() { return withoutOld; }});
   await pending;
   assert.deepEqual(ui.copied, [withoutOld]);
 });

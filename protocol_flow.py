@@ -154,14 +154,14 @@ def refresh_access_token_protocol(
     """不打开 Roxy 时，用上游纯协议登录一次并导出新的 AT。"""
     progress = progress or (lambda _stage, _message: None)
     target_email = str(email or "").strip()
-    progress("protocol_at_refresh", f"使用新邮箱 {target_email} 重新建立协议登录并获取 AT")
+    progress("protocol_at_refresh", f"使用账号 {target_email} 建立协议登录并获取 AT")
     try:
         login = login_with_password_and_totp(
             target_email,
             str(password or "").strip(),
             str(totp_secret or "").strip(),
             proxy=str(proxy_url or "").strip() or None,
-            progress=lambda message: progress("protocol_at_refresh", f"新邮箱重登：{message}"),
+            progress=lambda message: progress("protocol_at_refresh", f"协议登录：{message}"),
         )
     except MfaLoginError:
         raise

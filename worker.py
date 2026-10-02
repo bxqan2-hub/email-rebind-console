@@ -258,6 +258,74 @@ def _open_roxy_after_protocol(
     }
 
 
+def _run_source_login(task_id: int, context: dict) -> None:
+    """只登录原身份；错误、重试和停止均不进入换绑恢复分支。"""
+    task, account = context["task"], context["account"]
+    retries = max(0, min(int(task.get("max_transient_retries", settings.MAX_TRANSIENT_RETRIES) or 0), 10))
+    excluded: set[int] = set()
+    retry_count = 0
+
+    def progress(stage: str, message: str) -> None:
+        if store.is_task_stop_requested(task_id):
+            raise roxy_flow.TaskStopRequested("用户已请求停止")
+        stage = "source_at_received" if stage == "protocol_at_refreshed" else "source_login"
+        store.update_task(task_id, status="running", stage=stage, message=message)
+
+    for proxy_attempt in range(1, settings.MAX_PROXY_ATTEMPTS + 1):
+        if store.is_task_stop_requested(task_id):
+            store.finish_stopped(task_id)
+            return
+        proxy = store.pick_random_proxy(excluded) or store.pick_random_proxy()
+        if not proxy:
+            store.finish_failure(task_id, "代理池没有可用代理，请补充或重新启用后重试登录")
+            return
+        proxy_id = int(proxy["id"])
+        excluded.add(proxy_id)
+        store.assign_task_proxy(task_id, proxy, proxy_attempt)
+        try:
+            progress("source_login", f"使用 {proxy.get('display') or proxy_id} 登录原账号获取 AT")
+            result = protocol_flow.refresh_access_token_protocol(
+                email=str(task["login_email"]), password=str(account.get("password") or ""),
+                totp_secret=resolve_totp_secret(str(account.get("totp_secret") or "")),
+                proxy_url=str(proxy.get("proxy_url") or ""), progress=progress,
+            )
+            if store.is_task_stop_requested(task_id):
+                raise roxy_flow.TaskStopRequested("用户已请求停止")
+            store.finish_success(task_id, result)
+        except roxy_flow.TaskStopRequested:
+            store.finish_stopped(task_id)
+            return
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {str(exc)[:500]}"
+            if store.is_task_stop_requested(task_id):
+                store.finish_stopped(task_id)
+                return
+            proxy_failure = isinstance(exc, roxy_flow.ProxyFailure) or protocol_flow._looks_like_proxy_failure(message)
+            session_failure = isinstance(exc, protocol_flow.ProtocolSessionFailure) or any(
+                marker in message.lower() for marker in (
+                    "invalid_state", "session is no longer valid", "缺少 access_token", "未返回 access_token",
+                )
+            )
+            if proxy_failure:
+                store.mark_proxy_failure(proxy_id, task_id=task_id, old_email=task["old_email"], error=message)
+            if not (proxy_failure or session_failure) or retry_count >= retries or proxy_attempt >= settings.MAX_PROXY_ATTEMPTS:
+                store.finish_failure(task_id, message)
+                return
+            retry_count += 1
+            store.update_task(task_id, status="running", stage="source_login_retry", login_retry_count=retry_count,
+                              message=f"原账号登录临时失败，重新建立会话 {retry_count}/{retries}：{message}")
+            deadline = time.monotonic() + settings.TRANSIENT_RETRY_DELAY
+            while time.monotonic() < deadline:
+                if store.is_task_stop_requested(task_id):
+                    store.finish_stopped(task_id)
+                    return
+                time.sleep(max(0, min(0.25, deadline - time.monotonic())))
+            continue
+        store.mark_proxy_success(proxy_id, task_id=task_id, old_email=task["old_email"])
+        submit_trial_check(int(account["id"]))
+        return
+
+
 def _run(task_id: int) -> None:
     current_task_id = int(task_id)
     active_proxy: dict | None = None
@@ -273,6 +341,9 @@ def _run(task_id: int) -> None:
         task = context["task"]
         account = context["account"]
         replacement = context["replacement"]
+        if task.get("operation") == "login":
+            _run_source_login(current_task_id, context)
+            return
         if store.is_task_stop_requested(current_task_id):
             store.finish_stopped(current_task_id)
             return

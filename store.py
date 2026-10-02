@@ -902,12 +902,55 @@ def reserve_batch(
             tasks.append(task)
             created.append(dict(task))
             account.update({"status": "queued", "active_task_id": task["id"], "updated_at": now})
+            account["last_operation"] = "rebind"
             replacement.update({
                 "status": "reserved", "active_task_id": task["id"],
                 "bound_old_email": pair["old_email"], "updated_at": now,
             })
         _write(_ACCOUNTS, accounts)
         _write(_REPLACEMENTS, replacements)
+        _write(_TASKS, tasks)
+        return created
+
+
+def reserve_login_batch(
+    account_ids: Iterable[int], *, max_transient_retries: int | None = None,
+) -> list[dict]:
+    """原账号协议登录；不读取、占用或修改替换邮箱池。"""
+    wanted = {int(value) for value in account_ids}
+    with _LOCK:
+        accounts = _read(_ACCOUNTS)
+        tasks = _read(_TASKS)
+        busy = {int(t.get("account_id") or 0) for t in tasks if t.get("status") in {"queued", "running"}}
+        candidates = [a for a in accounts if int(a["id"]) in wanted
+                      and a.get("status") in {"ready", "failed"} and int(a["id"]) not in busy]
+        if any(a.get("email_change_confirmed") or a.get("email_change_uncertain") for a in candidates):
+            raise ValueError("所选账号存在已换绑或待核验记录，请使用重新登录获取 AT")
+        if any(not a.get("password") or not a.get("totp_secret") for a in candidates):
+            raise ValueError("仅登录获取 AT 需要原账号密码和 2FA，请补齐所选账号的登录资料")
+        now = _now()
+        created = []
+        for account in candidates:
+            previous = next((t for t in reversed(tasks) if t.get("account_id") == account["id"]), None)
+            task = {
+                "id": _next_id(tasks), "account_id": account["id"], "replacement_id": 0,
+                "old_email": account["old_email"], "new_email": "", "login_email": account["old_email"],
+                "operation": "login", "login_only": True, "rebind_mode": "protocol", "open_roxy_after": False,
+                "status": "queued", "stage": "queued", "attempt": 1,
+                "message": "等待原账号协议登录获取 AT（不换绑）", "created_at": now, "updated_at": now,
+            }
+            if max_transient_retries is not None:
+                task["max_transient_retries"] = max(0, min(int(max_transient_retries), 10))
+            if previous and previous.get("operation") == "login" and previous.get("status") == "failed":
+                task.update({"attempt": int(previous.get("attempt") or 1) + 1,
+                             "root_task_id": previous.get("root_task_id") or previous["id"],
+                             "retry_of_task_id": previous["id"]})
+                previous["manual_retry_task_id"] = task["id"]
+            tasks.append(task)
+            created.append(dict(task))
+            account.update({"status": "queued", "active_task_id": task["id"], "last_operation": "login", "updated_at": now})
+            account.pop("error", None)
+        _write(_ACCOUNTS, accounts)
         _write(_TASKS, tasks)
         return created
 
@@ -936,6 +979,9 @@ def reserve_failed_account_retry(
             for row in tasks
         ):
             return {"task": None, "reason": "busy"}
+        if account.get("last_operation") == "login":
+            created = reserve_login_batch([account_id], max_transient_retries=max_transient_retries)
+            return {"task": created[0] if created else None, "reason": "reserved"}
         replacement = next((
             row for row in sorted(replacements, key=lambda item: int(item.get("id") or 0))
             if row.get("status") == "available"
@@ -1188,6 +1234,9 @@ def finish_review_failure(task_id: int, new_email: str, error: str) -> None:
         task = next((row for row in tasks if int(row.get("id") or 0) == int(task_id)), None)
         if not task:
             return
+        if task.get("operation") == "login":
+            finish_failure(task_id, error)
+            return
         account = next((row for row in accounts if int(row.get("id") or 0) == int(task.get("account_id") or 0)), None)
         replacement = next((row for row in replacements if int(row.get("id") or 0) == int(task.get("replacement_id") or 0)), None)
         now = _now()
@@ -1294,7 +1343,7 @@ def get_task_context(task_id: int) -> dict | None:
         if account and task.get("login_only"):
             # 登录只依赖账号快照；邮箱池删除、日志清理或 ID 复用均不影响新邮箱登录。
             replacement = {
-                "email": task.get("new_email") or account.get("new_email"),
+                "email": task.get("login_email") or task.get("new_email") or account.get("new_email"),
                 "api_url": account.get("replacement_api_url") or "",
             }
         if not account or not replacement:
@@ -1491,7 +1540,7 @@ def update_task(
             else:
                 task[key] = value
         task["updated_at"] = now
-        if stage in {"changed", "protocol_verified"}:
+        if stage in {"changed", "protocol_verified"} and task.get("operation") != "login":
             task["email_change_confirmed"] = True
             accounts = _read(_ACCOUNTS)
             account = next((row for row in accounts if int(row.get("id") or 0) == int(task.get("account_id") or 0)), None)
@@ -1581,7 +1630,7 @@ def finish_stopped(task_id: int, message: str = "用户请求停止") -> dict | 
         if task.get("email_change_confirmed") or (account or {}).get("email_change_confirmed"):
             finish_review_failure(task_id, str(task.get("new_email") or ""), f"{clean}；邮箱已换绑，可重新获取 AT")
             return next(row for row in _read(_TASKS) if int(row.get("id") or 0) == int(task_id))
-        uncertain = bool(task.get("email_change_confirmed")) or bool(task.get("login_only")) or task.get("stage") in {
+        uncertain = bool(task.get("email_change_confirmed")) or (bool(task.get("login_only")) and task.get("operation") != "login") or task.get("stage") in {
             "submit_new_email_otp", "changed", "protocol_relogin_new", "protocol_export", "protocol_verified",
         }
         task.update({
@@ -1618,7 +1667,8 @@ def finish_stopped(task_id: int, message: str = "用户请求停止") -> dict | 
                     replacement.pop(key, None)
         _write(_TASKS, tasks)
         _write(_ACCOUNTS, accounts)
-        _write(_REPLACEMENTS, replacements)
+        if task.get("operation") != "login":
+            _write(_REPLACEMENTS, replacements)
         return dict(task)
 
 
@@ -1633,10 +1683,12 @@ def finish_success(task_id: int, result: dict) -> None:
             if int(row.get("id") or 0) == int(task.get("replacement_id") or 0)
             and str(row.get("email") or "").lower() == str(task.get("new_email") or "").lower()), None)
         now = _now()
+        source_login = task.get("operation") == "login"
+        expected_email = str(task.get("login_email") if source_login else task.get("new_email") or "").strip()
         access_token = str(result.get("access_token") or "").strip()
-        verified_email = str(result.get("email") or task.get("new_email") or "").strip()
-        if not access_token or verified_email.lower() != str(task.get("new_email") or "").lower():
-            raise ValueError("新邮箱登录结果缺少 AT 或邮箱不匹配")
+        verified_email = str(result.get("email") or expected_email).strip()
+        if not access_token or verified_email.lower() != expected_email.lower():
+            raise ValueError("登录结果缺少 AT 或邮箱不匹配")
         profile_id = str(result.get("roxy_profile_id") or "").strip()
         cdp_port = _valid_port(result.get("roxy_cdp_port"))
         browser_status = str(result.get("roxy_browser_status") or "not_opened").strip()
@@ -1650,9 +1702,12 @@ def finish_success(task_id: int, result: dict) -> None:
         else:
             stage = "protocol_verified"
             message = "纯协议换绑完成；AT 已获取，未打开 Roxy"
+        if source_login:
+            stage = "source_at_saved"
+            message = "原账号协议登录完成；AT 已保存，邮箱、密码和 2FA 保持原样"
         task.update({
             "status": "success", "stage": stage,
-            "email_change_confirmed": True,
+            "email_change_confirmed": not source_login,
             "message": message,
             "completed_at": now, "updated_at": now, "verified_email": verified_email,
             "roxy_profile_id": profile_id, "roxy_browser_status": browser_status,
@@ -1663,7 +1718,7 @@ def finish_success(task_id: int, result: dict) -> None:
         account.update({
             "status": "success", "current_email": verified_email, "new_email": verified_email,
             "replacement_api_url": str((replacement or {}).get("api_url") or account.get("replacement_api_url") or "").strip(),
-            "email_change_confirmed": True,
+            "email_change_confirmed": not source_login,
             "access_token": access_token, "rebound_at": now, "at_refreshed_at": now,
             "at_saved_at": now,
             "at_refresh_status": "success", "roxy_profile_id": profile_id,
@@ -1677,6 +1732,11 @@ def finish_success(task_id: int, result: dict) -> None:
             "roxy_open_requested": task["roxy_open_requested"],
             "updated_at": now,
         })
+        account["result_operation"] = "login" if source_login else "rebind"
+        if source_login:
+            for key in ("new_email", "replacement_api_url", "rebound_at"):
+                account.pop(key, None)
+            account["logged_in_at"] = now
         if open_error:
             task["roxy_open_error"] = open_error
             account["roxy_open_error"] = open_error
@@ -1714,7 +1774,8 @@ def finish_success(task_id: int, result: dict) -> None:
                 replacement.pop(key, None)
         _write(_TASKS, tasks)
         _write(_ACCOUNTS, accounts)
-        _write(_REPLACEMENTS, replacements)
+        if task.get("operation") != "login":
+            _write(_REPLACEMENTS, replacements)
 
 
 def finish_failure(task_id: int, error: str) -> None:
@@ -1742,7 +1803,8 @@ def finish_failure(task_id: int, error: str) -> None:
                 replacement.pop(key, None)
         _write(_TASKS, tasks)
         _write(_ACCOUNTS, accounts)
-        _write(_REPLACEMENTS, replacements)
+        if task.get("operation") != "login":
+            _write(_REPLACEMENTS, replacements)
 
 
 def retry_transient_failure(task_id: int, error: str, max_retries: int) -> dict:
@@ -1835,6 +1897,8 @@ def recover_interrupted_tasks() -> int:
         task_id = int(row.get("id") or 0)
         if row.get("stop_requested"):
             finish_stopped(task_id)
+        elif row.get("operation") == "login":
+            finish_failure(task_id, "分站进程重启，原账号登录中断，可重新登录获取 AT")
         elif row.get("login_only") or row.get("email_change_confirmed") or str(row.get("stage") or "") in uncertain_stages:
             finish_review_failure(
                 task_id,
@@ -1992,7 +2056,7 @@ def recover_rebind_accounts(trace_dir: Path) -> dict:
         return result
 
 
-def _export_success_line(row: dict, replacements: list[dict]) -> str | None:
+def _export_success_line(row: dict, replacements: list[dict], *, include_old_email: bool = True) -> str | None:
     new_email = str(row.get("new_email") or row.get("current_email") or "").strip()
     access_token = str(row.get("access_token") or "").strip()
     password = str(row.get("password") or "").strip()
@@ -2002,26 +2066,27 @@ def _export_success_line(row: dict, replacements: list[dict]) -> str | None:
     if not old_email or not new_email or not access_token:
         return None
     if password and totp_secret:
-        return "----".join([old_email, new_email, password, totp_secret, access_token])
+        prefix = [old_email] if include_old_email and row.get("result_operation") != "login" else []
+        return "----".join([*prefix, new_email, password, totp_secret, access_token])
     if source_api_url:
         replacement_api_url = _replacement_api_url(row, replacements)
         if replacement_api_url:
-            return "----".join([old_email, new_email, replacement_api_url, access_token])
+            return "----".join([*([old_email] if include_old_email else []), new_email, replacement_api_url, access_token])
     return None
 
 
-def export_success_line(account_id: int) -> str | None:
+def export_success_line(account_id: int, *, include_old_email: bool = True) -> str | None:
     with _LOCK:
         row = next((
             item for item in _read(_ACCOUNTS)
             if int(item.get("id") or 0) == int(account_id) and item.get("status") == "success"
         ), None)
-        return _export_success_line(row, _read(_REPLACEMENTS)) if row else None
+        return _export_success_line(row, _read(_REPLACEMENTS), include_old_email=include_old_email) if row else None
 
 
-def export_success_lines() -> list[str]:
+def export_success_lines(*, include_old_email: bool = True) -> list[str]:
     with _LOCK:
         rows = [row for row in _read(_ACCOUNTS) if row.get("status") == "success"]
         rows.sort(key=lambda row: int(row.get("id") or 0))
         replacements = _read(_REPLACEMENTS)
-        return [line for row in rows if (line := _export_success_line(row, replacements))]
+        return [line for row in rows if (line := _export_success_line(row, replacements, include_old_email=include_old_email))]

@@ -17,16 +17,16 @@
     <div class="side-note">与主站仅通过文本格式联动；本分站不读写主站账号文件。</div>
   </aside>
   <main>
-    <header><div><p class="eyebrow">EMAIL REBIND</p><h1>邮箱换绑工作台</h1><p class="sub">主站账号导入 → 替换邮箱一对一绑定 → 纯协议换绑 → 获取新邮箱 AT</p></div><div class="health"><span></span>本地服务在线</div></header>
+    <header><div><p class="eyebrow">EMAIL REBIND</p><h1>邮箱换绑工作台</h1><p class="sub">导入原账号 → 选择换绑或仅登录 → 保存并复制密码、2FA 和 AT</p></div><div class="health"><span></span>本地服务在线</div></header>
 
     <section class="stats" id="stats"></section>
     <div class="eligibility-note"><strong>执行前检查</strong><span>新邮箱不能已绑定其他 OpenAI 账号；账号需可使用 Settings → Account 自助换绑。单账号最多 24 小时 2 次、生命周期 20 次。</span></div>
     <div class="logic-note"><strong>双重自动轮换</strong><span>每个账号先从“换绑代理”池随机选择一条执行纯协议流程；代理网络失败时立即标记并随机换下一条，不消耗替换邮箱。收不到新邮箱验证码、取码 API 超时或新邮箱已被占用时，才隔离该邮箱并为同一原账号换下一个邮箱。</span></div>
-    <div class="logic-note keep-open-note"><strong>纯协议模式</strong><span>换绑核心使用 chatgpt-rebind-standalone：默认全程不打开浏览器；勾选“完成后开 Roxy”时，纯协议换绑成功后才额外选择另一条代理，新建 Roxy 窗口并登录替换邮箱。</span></div>
+    <div class="logic-note keep-open-note"><strong>纯协议模式</strong><span>只需 AT 时，导入原账号和代理后，勾选账号并点击“仅登录获取 AT”，无需替换邮箱。换绑核心使用 chatgpt-rebind-standalone：默认全程不打开浏览器；勾选“完成后开 Roxy”时，纯协议换绑成功后才额外选择另一条代理，新建 Roxy 窗口并登录替换邮箱。</span></div>
 
     <section class="view" id="view-workspace">
       <article class="card live-progress-card" aria-labelledby="liveProgressTitle">
-        <div class="card-head responsive"><div><span class="live-dot"></span><h2 id="liveProgressTitle">实时换绑进度</h2><p>按实际步骤更新，随时查看等待原因和阶段耗时。</p></div><span class="sync-status" id="progressSync" role="status">正在连接任务状态…</span></div>
+        <div class="card-head responsive"><div><span class="live-dot"></span><h2 id="liveProgressTitle">实时任务进度</h2><p>按实际步骤更新，随时查看等待原因和阶段耗时。</p></div><span class="sync-status" id="progressSync" role="status">正在连接任务状态…</span></div>
         <div id="liveTasks"><p class="progress-empty">正在加载任务…</p></div>
       </article>
       <div class="grid three">
@@ -51,20 +51,20 @@
       </div>
 
       <article class="card pairing-card">
-        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对</h2><p>默认使用纯协议完成原邮箱登录、换绑、新邮箱重登和 AT 获取；需要打开 Roxy 执行完整浏览器换绑时，点击“打开浏览器换绑”。</p></div><div class="actions"><label title="只影响新提交的批次，已启动批次保持原并发">本批并发 <input id="workers" type="number" min="1" max="{{ max_workers|default(10) }}" value="{{ default_workers|default(2) }}"></label><small id="workerHint">1~{{ max_workers|default(10) }} · 仅新批次生效</small><label>自动重试 <input id="transientRetries" type="number" min="0" max="10" value="2"></label><label>显示条数 <input id="pairVisibleRows" type="number" min="1" max="100" value="10"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn danger" id="deleteSelectedAccounts" disabled>删除所选原账号</button><button class="btn success" id="startRebind">开始纯协议换绑</button><button class="btn violet" id="startBrowserRebind">打开浏览器换绑</button></div></div>
+        <div class="card-head responsive"><div><span class="step green">04</span><h2>一对一配对 / 原账号登录</h2><p>换绑模式会占用替换邮箱；“仅登录获取 AT”只使用原账号密码 + 2FA 建立协议登录，不占用替换邮箱，也不会修改邮箱。</p></div><div class="actions"><label title="只影响新提交的批次，已启动批次保持原并发">本批并发 <input id="workers" type="number" min="1" max="{{ max_workers|default(10) }}" value="{{ default_workers|default(2) }}"></label><small id="workerHint">1~{{ max_workers|default(10) }} · 仅新批次生效</small><label>自动重试 <input id="transientRetries" type="number" min="0" max="10" value="2"></label><label>显示条数 <input id="pairVisibleRows" type="number" min="1" max="100" value="10"></label><button class="btn ghost" id="previewPairs">刷新配对</button><button class="btn danger" id="deleteSelectedAccounts" disabled>删除所选原账号</button><button class="btn success" id="startRebind">开始纯协议换绑</button><button class="btn primary" id="startSourceLogin">仅登录获取 AT</button><button class="btn violet" id="startBrowserRebind">打开浏览器换绑</button></div></div>
         <div class="table-wrap pairing-table"><table><thead><tr><th><input type="checkbox" id="selectAll"></th><th>原邮箱</th><th>账号状态</th><th>一对一替换邮箱</th><th>操作</th></tr></thead><tbody id="pairBody"></tbody></table></div>
       </article>
 
       <article class="card result-card">
-        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>默认按原邮箱导入类型复制：密码账号复制“原邮箱----换绑后邮箱----密码----2FA----AT”；URL 账号复制“原邮箱----换绑后邮箱----替换邮箱URL----AT”。选择“不含原邮箱”时仅去掉第一列，密码账号输出“换绑后邮箱----密码----2FA----AT”。全部结果保留在框内，可滚动查看并批量清理。</p></div><div class="actions"><label>可视行数 <input type="number" id="resultVisibleRows" min="1" max="100" value="10" aria-label="结果框可视行数"></label><label><input type="checkbox" id="selectResultAll"> 全选结果</label><label>复制格式 <select data-export-copy-format aria-label="完成结果复制格式"><option value="full">包含原邮箱（默认）</option><option value="without_old_email">不含原邮箱</option></select></label><button class="btn ghost" id="copyExport">复制完成结果</button><button class="btn danger" id="cleanupSelectedResults" disabled>清理所选结果</button></div></div>
+        <div class="card-head responsive"><div><span class="step amber">05</span><h2>完成结果</h2><p>仅登录账号固定复制“原邮箱----原密码----原2FA----AT”，不受换绑复制格式影响。默认按原邮箱导入类型复制：密码账号复制“原邮箱----换绑后邮箱----密码----2FA----AT”；URL 账号复制“原邮箱----换绑后邮箱----替换邮箱URL----AT”。选择“不含原邮箱”时仅去掉第一列，密码账号输出“换绑后邮箱----密码----2FA----AT”。全部结果保留在框内，可滚动查看并批量清理。</p></div><div class="actions"><label>可视行数 <input type="number" id="resultVisibleRows" min="1" max="100" value="10" aria-label="结果框可视行数"></label><label><input type="checkbox" id="selectResultAll"> 全选结果</label><label>复制格式 <select data-export-copy-format aria-label="完成结果复制格式"><option value="full">包含原邮箱（默认）</option><option value="without_old_email">换绑结果不含原邮箱</option></select></label><button class="btn ghost" id="copyExport">复制完成结果</button><button class="btn danger" id="cleanupSelectedResults" disabled>清理所选结果</button></div></div>
         <div class="result-scroll-hint" id="resultScrollHint"></div>
         <div id="recentTasks" class="task-list result-task-list"></div>
       </article>
 
       <article class="card success-account-card">
-        <div class="card-head responsive"><div><h2>换绑完成账号</h2><p>纯协议结果直接保存 AT；“检查并更新 AT”会先检查 Roxy：有窗口就复用窗口更新，没有窗口就用纯协议登录一次更新。</p></div><div class="actions"><label>筛选 <select id="successTrialFilter" aria-label="筛选成功账号"><option value="all">全部账号</option><option value="trial">仅有试用资格</option></select></label><label><input type="checkbox" id="selectSuccessAll"> 全选</label><button class="btn primary" id="copySelectedAT" disabled>复制AT</button><button class="btn violet" id="pushSelectedGCash" disabled>推送GCash</button><button class="btn danger" id="cleanupSelectedAccounts" disabled>清理</button></div></div>
+        <div class="card-head responsive"><div><h2>成功账号</h2><p>纯协议结果直接保存 AT；“检查并更新 AT”会先检查 Roxy：有窗口就复用窗口更新，没有窗口就用纯协议登录一次更新。</p></div><div class="actions"><label>筛选 <select id="successTrialFilter" aria-label="筛选成功账号"><option value="all">全部账号</option><option value="trial">仅有试用资格</option></select></label><label><input type="checkbox" id="selectSuccessAll"> 全选</label><button class="btn primary" id="copySelectedAT" disabled>复制AT</button><button class="btn violet" id="pushSelectedGCash" disabled>推送GCash</button><button class="btn danger" id="cleanupSelectedAccounts" disabled>清理</button></div></div>
         <div class="table-wrap success-table-wrap"><table class="success-table"><thead><tr><th><input type="checkbox" id="selectSuccessAllTable"></th><th>邮箱</th><th>AT</th><th>窗口</th><th>资格 / 套餐</th><th>CDP端口</th><th>更新</th><th>操作</th></tr></thead><tbody id="successAccountsBody"></tbody></table></div>
-        <div class="result-footer"><div class="actions"><label>复制格式 <select data-export-copy-format aria-label="成功账号复制格式"><option value="full">包含原邮箱（默认）</option><option value="without_old_email">不含原邮箱</option></select></label><button class="btn ghost" id="copySuccessResultsBottom">一键复制成功账号结果</button></div></div>
+        <div class="result-footer"><div class="actions"><label>复制格式 <select data-export-copy-format aria-label="成功账号复制格式"><option value="full">包含原邮箱（默认）</option><option value="without_old_email">换绑结果不含原邮箱</option></select></label><button class="btn ghost" id="copySuccessResultsBottom">一键复制成功账号结果</button></div></div>
       </article>
     </section>
 
@@ -88,6 +88,6 @@
     </section>
   </main>
   <div id="toast"></div>
-  <script src="/static/app.js?v=20260926-copy-format"></script>
+  <script src="/static/app.js?v=20261002-source-login"></script>
 </body>
 </html>

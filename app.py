@@ -267,12 +267,16 @@ def create_app(*, recover: bool = True) -> Flask:
         return jsonify({"ok": True, "pairs": pairs, "count": len(pairs)})
 
     @app.post("/api/rebind/start")
+    @app.post("/api/login/start")
     def api_start():
         data = request.get_json(silent=True) or {}
+        source_login = request.path == "/api/login/start"
         raw_ids = data.get("account_ids") or []
         if not isinstance(raw_ids, list):
             return jsonify({"ok": False, "error": "account_ids 必须是数组"}), 400
         ids = [int(value) for value in raw_ids if str(value).isdigit()]
+        if source_login and (not ids or len(ids) != len(raw_ids)):
+            return jsonify({"ok": False, "error": "请明确选择需要登录的原账号，account_ids 必须包含有效账号 ID"}), 400
         try:
             workers = settings.validate_workers(data.get("workers", settings.DEFAULT_WORKERS))
         except ValueError as exc:
@@ -281,8 +285,8 @@ def create_app(*, recover: bool = True) -> Flask:
             transient_retries = max(0, min(int(data.get("transient_retries", settings.MAX_TRANSIENT_RETRIES)), 10))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "自动重试次数必须是 0~10 的整数"}), 400
-        open_roxy_after = bool(data.get("open_roxy_after"))
-        rebind_mode = str(data.get("rebind_mode") or "protocol").strip().lower()
+        open_roxy_after = bool(data.get("open_roxy_after")) and not source_login
+        rebind_mode = "protocol" if source_login else str(data.get("rebind_mode") or "protocol").strip().lower()
         if rebind_mode not in {"protocol", "browser"}:
             return jsonify({"ok": False, "error": "rebind_mode 必须是 protocol 或 browser"}), 400
         if rebind_mode == "browser":
@@ -295,13 +299,16 @@ def create_app(*, recover: bool = True) -> Flask:
                     "error": "完成后打开 Roxy 需要至少两条可用代理：一条用于纯协议换绑，另一条用于 Roxy 登录",
                 }), 409
             return jsonify({"ok": False, "error": "换绑代理池没有可用代理，请先手动导入"}), 409
-        tasks = store.reserve_batch(
-            ids, max_transient_retries=transient_retries,
-            open_roxy_after=open_roxy_after,
-            rebind_mode=rebind_mode,
-        )
+        try:
+            tasks = store.reserve_login_batch(ids, max_transient_retries=transient_retries) if source_login else store.reserve_batch(
+                ids, max_transient_retries=transient_retries,
+                open_roxy_after=open_roxy_after, rebind_mode=rebind_mode,
+            )
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
         if not tasks:
-            return jsonify({"ok": False, "error": "没有可一对一配对的待换绑账号和替换邮箱"}), 409
+            error = "所选原账号没有可登录的待处理或失败账号" if source_login else "没有可一对一配对的待换绑账号和替换邮箱"
+            return jsonify({"ok": False, "error": error}), 409
         effective_workers = min(workers, len(tasks))
         submitted = worker.submit_tasks(tasks, effective_workers)
         return jsonify({
@@ -310,6 +317,7 @@ def create_app(*, recover: bool = True) -> Flask:
             "transient_retries": transient_retries,
             "open_roxy_after": open_roxy_after, "tasks": tasks,
             "rebind_mode": rebind_mode,
+            "operation": "login" if source_login else "rebind",
         })
 
     @app.post("/api/accounts/<int:account_id>/retry")
@@ -321,9 +329,12 @@ def create_app(*, recover: bool = True) -> Flask:
             transient_retries = max(0, min(int(data.get("transient_retries", settings.MAX_TRANSIENT_RETRIES)), 10))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "自动重试次数必须是 0~10 的整数"}), 400
-        result = store.reserve_failed_account_retry(
-            account_id, max_transient_retries=transient_retries,
-        )
+        try:
+            result = store.reserve_failed_account_retry(
+                account_id, max_transient_retries=transient_retries,
+            )
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
         task = result.get("task")
         if not task:
             reason = result.get("reason")
@@ -426,11 +437,11 @@ def create_app(*, recover: bool = True) -> Flask:
 
     @app.get("/api/export")
     def api_export():
-        return export_response(store.export_success_lines())
+        return export_response(store.export_success_lines(include_old_email=request.args.get("format") != "without_old_email"))
 
     @app.get("/api/accounts/<int:account_id>/export")
     def api_export_account(account_id: int):
-        line = store.export_success_line(account_id)
+        line = store.export_success_line(account_id, include_old_email=request.args.get("format") != "without_old_email")
         if line is None:
             return jsonify({"ok": False, "error": "该成功账号暂无完整导出结果"}), 404
         return export_response([line], account_id=account_id)
