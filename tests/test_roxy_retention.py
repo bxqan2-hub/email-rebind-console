@@ -24,14 +24,16 @@ class FakeDriver:
 
 
 class FakeClient:
-    def __init__(self, events, profile_proxy=None):
+    def __init__(self, events, profile_proxy=None, local_component=None):
         self.events = events
         self.profile_proxy = profile_proxy
+        self.local_component = local_component
 
     def open_profile(self, **kwargs):
         self.events.append(f"open:{kwargs.get('require_proxy_exit_ip')}")
         return SimpleNamespace(
-            profile_id="profile-1", preflight_exit_geo={"ip": "203.0.113.10"},
+            profile_id="local-profile-1" if self.local_component else "profile-1",
+            preflight_exit_geo={"ip": "203.0.113.10"},
             debugger_address="127.0.0.1:9333", ws_endpoint=None,
         )
 
@@ -55,8 +57,8 @@ class RoxyRetentionTests(unittest.TestCase):
     def _loaded(self, events, fetch_session=None):
         client_box = {}
 
-        def client_factory(profile_proxy=None):
-            client = FakeClient(events, profile_proxy)
+        def client_factory(profile_proxy=None, local_component=None):
+            client = FakeClient(events, profile_proxy, local_component)
             client_box["client"] = client
             return client
 
@@ -87,17 +89,18 @@ class RoxyRetentionTests(unittest.TestCase):
             )
 
         self.assertEqual(result["roxy_browser_status"], "open")
-        self.assertEqual(result["roxy_profile_id"], "profile-1")
+        self.assertEqual(result["roxy_profile_id"], "local-profile-1")
         self.assertEqual(result["roxy_cdp_port"], 9333)
+        self.assertIs(_client_box["client"].local_component, True)
         self.assertNotIn("driver.quit", events)
         self.assertNotIn("cleanup", events)
-        self.assertIn("profile-1", roxy_flow._RETAINED)
+        self.assertIn("local-profile-1", roxy_flow._RETAINED)
 
-        self.assertTrue(roxy_flow.delete_retained_profile("profile-1"))
-        self.assertIn("close:profile-1", events)
-        self.assertIn("delete:profile-1", events)
+        self.assertTrue(roxy_flow.delete_retained_profile("local-profile-1"))
+        self.assertIn("close:local-profile-1", events)
+        self.assertIn("delete:local-profile-1", events)
         self.assertIn("driver.quit", events)
-        self.assertNotIn("profile-1", roxy_flow._RETAINED)
+        self.assertNotIn("local-profile-1", roxy_flow._RETAINED)
 
     def test_extension_failure_quits_driver_and_deletes_temporary_profile(self):
         events = []
@@ -113,10 +116,10 @@ class RoxyRetentionTests(unittest.TestCase):
                 )
 
         self.assertIn("driver.quit", events)
-        self.assertIn("close:profile-1", events)
-        self.assertIn("delete:profile-1", events)
-        self.assertLess(events.index("driver.quit"), events.index("close:profile-1"))
-        self.assertLess(events.index("close:profile-1"), events.index("delete:profile-1"))
+        self.assertIn("close:local-profile-1", events)
+        self.assertIn("delete:local-profile-1", events)
+        self.assertLess(events.index("driver.quit"), events.index("close:local-profile-1"))
+        self.assertLess(events.index("close:local-profile-1"), events.index("delete:local-profile-1"))
         self.assertFalse(roxy_flow._RETAINED)
 
     def test_replacement_login_retries_with_new_email_until_access_token_is_obtained(self):
@@ -142,7 +145,7 @@ class RoxyRetentionTests(unittest.TestCase):
         self.assertEqual(result["access_token"], "at-new")
         self.assertEqual(complete_login.call_count, 2)
         self.assertIn("relogin_new_retry", progress_events)
-        self.assertIn("profile-1", roxy_flow._RETAINED)
+        self.assertIn("local-profile-1", roxy_flow._RETAINED)
 
     def test_direct_replacement_login_keeps_new_email_window(self):
         events = []

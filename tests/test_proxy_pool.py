@@ -121,8 +121,10 @@ class ProxyPoolTests(unittest.TestCase):
 
     def test_roxy_preflight_failure_becomes_proxy_failure(self):
         class FakeClient:
-            def __init__(self, profile_proxy):
+            def __init__(self, profile_proxy, local_component=None):
                 self.profile_proxy = profile_proxy
+                self.local_component = local_component
+                assert local_component is True
 
             def open_profile(self, **kwargs):
                 self.kwargs = kwargs
@@ -150,12 +152,14 @@ class ProxyPoolTests(unittest.TestCase):
                 events.append("quit")
 
         class FakeClient:
-            def __init__(self, profile_proxy):
+            def __init__(self, profile_proxy, local_component=None):
                 self.profile_proxy = profile_proxy
+                self.local_component = local_component
+                assert local_component is True
 
             def open_profile(self, **kwargs):
                 events.append(f"open:{kwargs.get('require_proxy_exit_ip')}")
-                return SimpleNamespace(profile_id="p1", preflight_exit_geo={"ip": "203.0.113.10"})
+                return SimpleNamespace(profile_id="local-p1", preflight_exit_geo={"ip": "203.0.113.10"})
 
             def cleanup_profile(self, _opened):
                 events.append("cleanup")
@@ -176,7 +180,7 @@ class ProxyPoolTests(unittest.TestCase):
                     password="Password!", totp_secret="JBSWY3DPEHPK3PXP",
                     api_url="https://mail.example/code", proxy_url="http://proxy.example:8000",
                 )
-        self.assertEqual(events, ["open:True", "quit", "close:p1", "delete:p1"])
+        self.assertEqual(events, ["open:True", "quit", "close:local-p1", "delete:local-p1"])
 
 
 if __name__ == "__main__":

@@ -66,6 +66,17 @@ def _load_main_roxy():
     )
 
 
+def _new_local_roxy_client(RoxyBrowserClient, *, profile_proxy: str | None = None):
+    """Create every new rebind window through the bundled local Roxy component."""
+    return RoxyBrowserClient(local_component=True, profile_proxy=profile_proxy)
+
+
+def _profile_roxy_client(RoxyBrowserClient, profile_id: str):
+    """Reconnect a saved Profile through the backend that originally created it."""
+    key = str(profile_id or "").strip()
+    return RoxyBrowserClient(local_component=key.startswith("local-"))
+
+
 def _retain_browser(*, profile_id: str, email: str, client, opened, driver) -> None:
     key = str(profile_id or "").strip()
     if not key:
@@ -93,14 +104,33 @@ def _open_existing_profile(client, profile_id: str):
     key = str(profile_id or "").strip()
     if not key:
         raise RuntimeError("成功账号没有可用的 Roxy profile_id")
-    path = str(roxy_cfg.ROXY_OPEN_PATH).format(profile_id=key)
-    body = dict(getattr(roxy_cfg, "ROXY_OPEN_EXTRA_PARAMS", {}) or {})
-    body.setdefault("workspaceId", _workspace_id_value())
-    body.setdefault("dirId", int(key) if key.isdigit() else key)
-    body.setdefault("args", [])
-    body.setdefault("forceOpen", True)
-    body["headless"] = False
-    method = str(roxy_cfg.ROXY_OPEN_METHOD or "POST").upper()
+    is_local = key.startswith("local-")
+    if bool(getattr(client, "local_component", False)) != is_local:
+        raise ValueError("Profile 所属后端与当前 Roxy 客户端不一致")
+    if is_local:
+        configured_args = (getattr(roxy_cfg, "ROXY_OPEN_EXTRA_PARAMS", {}) or {}).get("args", [])
+        if not isinstance(configured_args, (list, tuple)):
+            configured_args = []
+        local_args = list(getattr(client, "_local_startup_args", []) or [])
+        body = {
+            "dirId": key.removeprefix("local-"),
+            "headless": False,
+            "args": list(dict.fromkeys(
+                arg for value in [*local_args, *configured_args]
+                if (arg := str(value or "").strip())
+            )),
+            "workbench": False,
+        }
+        path, method = "/browser/open", "POST"
+    else:
+        path = str(roxy_cfg.ROXY_OPEN_PATH).format(profile_id=key)
+        body = dict(getattr(roxy_cfg, "ROXY_OPEN_EXTRA_PARAMS", {}) or {})
+        body.setdefault("workspaceId", _workspace_id_value())
+        body["dirId"] = int(key) if key.isdigit() else key
+        body.setdefault("args", [])
+        body.setdefault("forceOpen", True)
+        body["headless"] = False
+        method = str(roxy_cfg.ROXY_OPEN_METHOD or "POST").upper()
     result = client.request(
         method, path,
         params=body if method == "GET" else None,
@@ -158,7 +188,7 @@ def resolve_roxy_cdp_port(profile_id: str) -> int | None:
         if port:
             return port
     RoxyBrowserClient = _load_main_roxy()[0]
-    opened = _open_existing_profile(RoxyBrowserClient(), key)
+    opened = _open_existing_profile(_profile_roxy_client(RoxyBrowserClient, key), key)
     return _roxy_cdp_port(opened)
 
 
@@ -169,7 +199,7 @@ def _retained_or_reopen(profile_id: str, expected_email: str) -> dict:
     if existing:
         return existing
     RoxyBrowserClient, build_driver, center_window, *_rest = _load_main_roxy()
-    client = RoxyBrowserClient()
+    client = _profile_roxy_client(RoxyBrowserClient, key)
     opened = _open_existing_profile(client, key)
     driver = build_driver(opened)
     center_window(driver)
@@ -222,7 +252,7 @@ def delete_retained_profile(profile_id: str) -> bool:
         raise RuntimeError("成功账号没有可关闭的 Roxy profile_id")
     with _RETAINED_LOCK:
         record = _RETAINED.get(key)
-    client = record["client"] if record else _load_main_roxy()[0]()
+    client = record["client"] if record else _profile_roxy_client(_load_main_roxy()[0], key)
     lock = record["lock"] if record else threading.RLock()
     with lock:
         closed = bool(client.close_profile(key))
@@ -614,14 +644,14 @@ def perform_replacement_login(
     clean_proxy = str(proxy_url or "").strip()
     if not clean_proxy:
         raise ProxyFailure("任务没有分配换绑代理，已阻止 Roxy 直连")
-    client = RoxyBrowserClient(profile_proxy=clean_proxy)
+    client = _new_local_roxy_client(RoxyBrowserClient, profile_proxy=clean_proxy)
     opened = None
     driver = None
     keep_success_open = False
     try:
         progress("check_proxy", "检测补救登录代理出口；失败时自动切换下一条")
         try:
-            opened = client.open_profile(require_proxy_exit_ip=True)
+            opened = client.open_profile(require_proxy_exit_ip=True, headless=False)
         except Exception as exc:
             message = f"{type(exc).__name__}: {str(exc)[:400]}"
             if any(marker in message.lower() for marker in ("代理出口", "代理格式", "代理协议", "proxy")):
